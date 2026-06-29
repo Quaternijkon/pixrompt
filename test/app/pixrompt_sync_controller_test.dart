@@ -46,7 +46,7 @@ void main() {
       uid: 'local',
       imageKey: 'bytes-local',
       prompt: 'Local prompt',
-      updatedAt: 10,
+      updatedAt: 1000,
     );
     final gone = PromptImageItem.sample(
       uid: 'gone',
@@ -121,6 +121,7 @@ void main() {
     expect(pushedImageUids, containsAll(['gone', 'local']));
     expect(pushedLocal.blob?.sha256, hasLength(64));
     expect(api.uploadedBlobSha256, contains(pushedLocal.blob?.sha256));
+    expect(api.pulledRequests.single.cursor, 4);
     expect(
       gallery.state.allImages.map((image) => image.uid),
       isNot(contains('gone')),
@@ -145,6 +146,7 @@ void main() {
     await sync.manualSync();
 
     expect(api.pushedRequests.last.images, isEmpty);
+    expect(api.pulledRequests.last.cursor, 8);
     expect(gallery.state.allImages.every((image) {
       return image.lastSyncedAt != null;
     }), isTrue);
@@ -155,6 +157,7 @@ class _FakePixromptApi implements PixromptApi {
   final loginPasswords = <String>[];
   final logoutTokens = <String>[];
   final pushedRequests = <PushRequest>[];
+  final pulledRequests = <PullRequest>[];
   final uploadedBlobSha256 = <String>[];
   final blobDownloads = <String, Uint8List>{};
   PullResponse pullResponse = const PullResponse(cursor: 0, serverTime: 0);
@@ -204,6 +207,7 @@ class _FakePixromptApi implements PixromptApi {
 
   @override
   Future<PullResponse> pull(String token, PullRequest request) async {
+    pulledRequests.add(request);
     return pullResponse;
   }
 

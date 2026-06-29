@@ -145,6 +145,7 @@ class PixromptSyncController extends ChangeNotifier {
 
     try {
       final api = _apiFor(state.apiBaseUrl);
+      final pullCursor = state.cursor;
       final local = await _prepareLocalImagesForPush(api, token, state);
       if (local.imagesToPersist.isNotEmpty) {
         await _pixromptController.applySyncUpserts(local.imagesToPersist);
@@ -169,7 +170,7 @@ class PixromptSyncController extends ChangeNotifier {
         token,
         PullRequest(
           deviceId: state.deviceId,
-          cursor: state.cursor,
+          cursor: pullCursor,
           knownBlobSha256: local.knownBlobSha256.toList(growable: false),
         ),
       );
@@ -303,8 +304,9 @@ class PixromptSyncController extends ChangeNotifier {
   }) {
     final knownServerVersion = state.knownServerVersions[record.uid];
     return knownServerVersion == null ||
-        image.updatedAt > (image.lastSyncedAt ?? 0) ||
-        needsMaintenance;
+        image.lastSyncedAt == null ||
+        needsMaintenance ||
+        state.deletedTombstones.containsKey(record.uid);
   }
 
   Future<PixromptSyncState> _persistPushResult(
@@ -334,10 +336,8 @@ class PixromptSyncController extends ChangeNotifier {
       }
     }
     final next = state.copyWith(
-      cursor: response.cursor > state.cursor ? response.cursor : state.cursor,
       knownServerVersions: knownServerVersions,
       deletedTombstones: deletedTombstones,
-      lastSyncAt: response.serverTime > 0 ? response.serverTime : state.lastSyncAt,
     );
     if (acceptedRecords.isNotEmpty) {
       await _pixromptController.applySyncUpserts(acceptedRecords);
