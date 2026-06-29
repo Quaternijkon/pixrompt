@@ -31,6 +31,14 @@ def _row_timestamp(row: Row) -> int:
     return int(row["updated_at"])
 
 
+def _is_stale_conflict(existing: Row | None, base_server_version: int, client_timestamp: int) -> bool:
+    if existing is None:
+        return False
+    if int(existing["server_version"]) == base_server_version:
+        return False
+    return client_timestamp <= _row_timestamp(existing)
+
+
 def _get_image(connection: Connection, user_id: int, image_uid: str) -> Row | None:
     return connection.execute(
         "SELECT * FROM images WHERE user_id = ? AND image_uid = ?",
@@ -232,51 +240,63 @@ def push(
     missing_seen: set[str] = set()
 
     with get_db_lock(request):
-        for image in payload.images:
-            if image.blob is not None and not _blob_exists(connection, image.blob.sha256):
-                _add_missing_blob(missing_blobs, missing_seen, image.blob.sha256)
+        try:
+            for image in payload.images:
+                if image.blob is not None and not _blob_exists(connection, image.blob.sha256):
+                    _add_missing_blob(missing_blobs, missing_seen, image.blob.sha256)
 
-            existing = _get_image(connection, session.user_id, image.image_uid)
-            if existing is not None and image.updated_at <= _row_timestamp(existing):
-                rejected.append(
-                    RejectedItem(
-                        imageUid=image.image_uid,
-                        serverVersion=int(existing["server_version"]),
-                        reason=_REJECT_NEWER_OR_EQUAL,
+                existing = _get_image(connection, session.user_id, image.image_uid)
+                if _is_stale_conflict(
+                    existing,
+                    image.base_server_version,
+                    image.updated_at,
+                ):
+                    rejected.append(
+                        RejectedItem(
+                            imageUid=image.image_uid,
+                            serverVersion=int(existing["server_version"]),
+                            reason=_REJECT_NEWER_OR_EQUAL,
+                        )
                     )
+                    continue
+
+                version = _accept_image(
+                    connection,
+                    user_id=session.user_id,
+                    payload=image,
+                    existing=existing,
                 )
-                continue
+                accepted.append(AcceptedItem(imageUid=image.image_uid, serverVersion=version))
 
-            version = _accept_image(
-                connection,
-                user_id=session.user_id,
-                payload=image,
-                existing=existing,
-            )
-            accepted.append(AcceptedItem(imageUid=image.image_uid, serverVersion=version))
-
-        for deletion in payload.deleted:
-            existing = _get_image(connection, session.user_id, deletion.image_uid)
-            if existing is not None and deletion.deleted_at <= _row_timestamp(existing):
-                rejected.append(
-                    RejectedItem(
-                        imageUid=deletion.image_uid,
-                        serverVersion=int(existing["server_version"]),
-                        reason=_REJECT_NEWER_OR_EQUAL,
+            for deletion in payload.deleted:
+                existing = _get_image(connection, session.user_id, deletion.image_uid)
+                if _is_stale_conflict(
+                    existing,
+                    deletion.base_server_version,
+                    deletion.deleted_at,
+                ):
+                    rejected.append(
+                        RejectedItem(
+                            imageUid=deletion.image_uid,
+                            serverVersion=int(existing["server_version"]),
+                            reason=_REJECT_NEWER_OR_EQUAL,
+                        )
                     )
+                    continue
+
+                version = _accept_delete(
+                    connection,
+                    user_id=session.user_id,
+                    payload=deletion,
+                    existing=existing,
                 )
-                continue
+                accepted.append(AcceptedItem(imageUid=deletion.image_uid, serverVersion=version))
 
-            version = _accept_delete(
-                connection,
-                user_id=session.user_id,
-                payload=deletion,
-                existing=existing,
-            )
-            accepted.append(AcceptedItem(imageUid=deletion.image_uid, serverVersion=version))
-
-        connection.commit()
-        cursor = db.current_cursor(connection, session.user_id)
+            connection.commit()
+            cursor = db.current_cursor(connection, session.user_id)
+        except Exception:
+            connection.rollback()
+            raise
 
     return PushResponse(
         cursor=cursor,

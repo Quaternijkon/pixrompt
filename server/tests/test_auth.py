@@ -26,6 +26,26 @@ def test_config_requires_secret_env(monkeypatch):
         assert name in message
 
 
+@pytest.mark.parametrize(
+    "token_secret",
+    [
+        "short-secret",
+        "<random-32-byte-or-longer-secret>",
+    ],
+)
+def test_config_rejects_weak_token_secret(monkeypatch, tmp_path, token_secret):
+    from server.app.config import ConfigError, load_settings
+
+    monkeypatch.setenv("PIXROMPT_USER_EMAIL", "pixrompt-user@example.test")
+    monkeypatch.setenv("PIXROMPT_PASSWORD_HASH", "placeholder-hash")
+    monkeypatch.setenv("PIXROMPT_TOKEN_SECRET", token_secret)
+    monkeypatch.setenv("PIXROMPT_DATABASE_PATH", str(tmp_path / "pixrompt.sqlite3"))
+    monkeypatch.setenv("PIXROMPT_BLOB_DIR", str(tmp_path / "blobs"))
+
+    with pytest.raises(ConfigError, match="PIXROMPT_TOKEN_SECRET"):
+        load_settings()
+
+
 def test_health_endpoints_are_public(client):
     root_response = client.get("/health")
     versioned_response = client.get("/v1/health")

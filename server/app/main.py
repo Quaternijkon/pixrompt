@@ -6,7 +6,13 @@ from fastapi.responses import FileResponse
 
 from server.app import db
 from server.app.auth import get_current_session, router as auth_router
-from server.app.blob_store import BlobHashMismatch, BlobNotFound, BlobStore, InvalidBlobHash
+from server.app.blob_store import (
+    BlobHashMismatch,
+    BlobNotFound,
+    BlobStore,
+    BlobTooLarge,
+    InvalidBlobHash,
+)
 from server.app.config import Settings, load_settings
 from server.app.sync import router as sync_router
 from server.app.security import now_ms
@@ -98,17 +104,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         dependencies=[Depends(get_current_session)],
     )
     async def put_blob(request: Request, sha256: str) -> Response:
-        data = await request.body()
         mime_type = request.headers.get("content-type") or "application/octet-stream"
         mime_type = mime_type.split(";", 1)[0].strip() or "application/octet-stream"
 
         try:
-            stored = request.app.state.blob_store.put(sha256, data)
+            stored = await request.app.state.blob_store.put_stream(
+                sha256,
+                request.stream(),
+                max_bytes=request.app.state.settings.max_blob_bytes,
+            )
         except InvalidBlobHash:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Blob not found",
             ) from None
+        except BlobTooLarge as exc:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=str(exc),
+            ) from exc
         except BlobHashMismatch as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -116,20 +130,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ) from exc
 
         with request.app.state.db_lock:
-            request.app.state.db.execute(
-                """
-                INSERT OR IGNORE INTO blobs (
-                    sha256, size_bytes, mime_type, storage_path, created_at
-                ) VALUES (?, ?, ?, ?, ?)
-                """,
-                (sha256, stored.size_bytes, mime_type, stored.relative_path, now_ms()),
-            )
-            request.app.state.db.commit()
+            try:
+                request.app.state.db.execute(
+                    """
+                    INSERT OR IGNORE INTO blobs (
+                        sha256, size_bytes, mime_type, storage_path, created_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (sha256, stored.size_bytes, mime_type, stored.relative_path, now_ms()),
+                )
+                row = request.app.state.db.execute(
+                    "SELECT size_bytes, mime_type FROM blobs WHERE sha256 = ?",
+                    (sha256,),
+                ).fetchone()
+                request.app.state.db.commit()
+            except Exception:
+                request.app.state.db.rollback()
+                raise
+
+        response_size = int(row["size_bytes"]) if row is not None else stored.size_bytes
+        response_mime_type = row["mime_type"] if row is not None else mime_type
 
         return Response(
             status_code=status.HTTP_201_CREATED if stored.created else status.HTTP_200_OK,
-            headers=_blob_headers(sha256, stored.size_bytes),
-            media_type=mime_type,
+            headers=_blob_headers(sha256, response_size),
+            media_type=response_mime_type,
         )
 
     return app

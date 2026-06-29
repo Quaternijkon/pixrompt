@@ -13,7 +13,7 @@ def test_blob_put_get_head_verify_hash_and_deduplicate(client, auth_headers, con
     second_response = client.put(
         f"/v1/blobs/{digest}",
         content=data,
-        headers={**auth_headers, "content-type": "image/png"},
+        headers={**auth_headers, "content-type": "image/jpeg"},
     )
     head_response = client.head(f"/v1/blobs/{digest}", headers=auth_headers)
     get_response = client.get(f"/v1/blobs/{digest}", headers=auth_headers)
@@ -21,6 +21,7 @@ def test_blob_put_get_head_verify_hash_and_deduplicate(client, auth_headers, con
     stored_files = [path for path in configured_env["blob_dir"].rglob("*") if path.is_file()]
     assert first_response.status_code == 201
     assert second_response.status_code == 200
+    assert second_response.headers["content-type"].startswith("image/png")
     assert len(stored_files) == 1
     assert head_response.status_code == 200
     assert head_response.headers["x-pixrompt-sha256"] == digest
@@ -45,6 +46,36 @@ def test_blob_put_rejects_body_that_does_not_match_path_hash(
 
     stored_files = [path for path in configured_env["blob_dir"].rglob("*") if path.is_file()]
     assert response.status_code == 400
+    assert stored_files == []
+
+
+def test_blob_put_rejects_upload_larger_than_configured_limit(
+    monkeypatch,
+    configured_env,
+):
+    from fastapi.testclient import TestClient
+
+    from server.app.main import create_app
+
+    monkeypatch.setenv("PIXROMPT_MAX_BLOB_BYTES", "4")
+    with TestClient(create_app()) as limited_client:
+        login_response = limited_client.post(
+            "/v1/auth/login",
+            json={
+                "email": configured_env["email"],
+                "password": configured_env["password"],
+                "deviceId": "pytest-device",
+            },
+        )
+        token = login_response.json()["token"]
+        headers = {"Authorization": f"Bearer {token}", "content-type": "image/png"}
+        data = b"12345"
+        digest = sha256_hex(data)
+
+        response = limited_client.put(f"/v1/blobs/{digest}", content=data, headers=headers)
+
+    stored_files = [path for path in configured_env["blob_dir"].rglob("*") if path.is_file()]
+    assert response.status_code == 413
     assert stored_files == []
 
 

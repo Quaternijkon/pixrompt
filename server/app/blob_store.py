@@ -4,6 +4,7 @@ import re
 import secrets
 from dataclasses import dataclass
 from pathlib import Path
+from typing import AsyncIterator
 
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -19,6 +20,10 @@ class InvalidBlobHash(BlobStoreError):
 
 class BlobHashMismatch(BlobStoreError):
     """Raised when uploaded bytes do not match the path SHA-256."""
+
+
+class BlobTooLarge(BlobStoreError):
+    """Raised when an uploaded blob exceeds the configured maximum size."""
 
 
 class BlobNotFound(FileNotFoundError):
@@ -93,6 +98,77 @@ class BlobStore:
             size_bytes=len(data),
             created=True,
         )
+
+    async def put_stream(
+        self,
+        sha256: str,
+        chunks: AsyncIterator[bytes],
+        *,
+        max_bytes: int,
+    ) -> StoredBlob:
+        self._validate_hash(sha256)
+
+        path = self.path_for(sha256)
+        if path.is_file():
+            size, actual = await self._consume_existing_stream(chunks, max_bytes=max_bytes)
+            if actual != sha256:
+                raise BlobHashMismatch(f"body SHA-256 {actual} does not match {sha256}")
+            return StoredBlob(
+                sha256=sha256,
+                path=path,
+                relative_path=self.relative_path_for(sha256),
+                size_bytes=path.stat().st_size,
+                created=False,
+            )
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
+        hasher = hashlib.sha256()
+        size = 0
+
+        try:
+            with temp_path.open("xb") as handle:
+                async for chunk in chunks:
+                    if not chunk:
+                        continue
+                    size += len(chunk)
+                    if size > max_bytes:
+                        raise BlobTooLarge(f"blob exceeds maximum size of {max_bytes} bytes")
+                    hasher.update(chunk)
+                    handle.write(chunk)
+
+            actual = hasher.hexdigest()
+            if actual != sha256:
+                raise BlobHashMismatch(f"body SHA-256 {actual} does not match {sha256}")
+            os.replace(temp_path, path)
+        finally:
+            if temp_path.exists():
+                temp_path.unlink()
+
+        return StoredBlob(
+            sha256=sha256,
+            path=path,
+            relative_path=self.relative_path_for(sha256),
+            size_bytes=size,
+            created=True,
+        )
+
+    async def _consume_existing_stream(
+        self,
+        chunks: AsyncIterator[bytes],
+        *,
+        max_bytes: int,
+    ) -> tuple[int, str]:
+        hasher = hashlib.sha256()
+        size = 0
+        async for chunk in chunks:
+            if not chunk:
+                continue
+            size += len(chunk)
+            if size > max_bytes:
+                raise BlobTooLarge(f"blob exceeds maximum size of {max_bytes} bytes")
+            hasher.update(chunk)
+        return size, hasher.hexdigest()
 
     def _validate_hash(self, sha256: str) -> None:
         if not is_valid_sha256(sha256):

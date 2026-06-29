@@ -121,31 +121,35 @@ def login(request: Request, payload: LoginRequest) -> LoginResponse:
 
     connection = get_db(request)
     with get_db_lock(request):
-        user = _configured_user(connection, settings.user_email)
-        expires_at = now_ms() + settings.token_ttl_seconds * 1000
-        session_id = secrets.token_urlsafe(18)
-        token = create_signed_token(
-            settings,
-            session_id=session_id,
-            user_id=int(user["id"]),
-            expires_at_ms=expires_at,
-        )
-        connection.execute(
-            """
-            INSERT INTO sessions (
-                id, user_id, token_hash, device_id, expires_at, revoked_at, created_at
-            ) VALUES (?, ?, ?, ?, ?, NULL, ?)
-            """,
-            (
-                session_id,
-                int(user["id"]),
-                hash_token(token),
-                payload.device_id,
-                expires_at,
-                now_ms(),
-            ),
-        )
-        connection.commit()
+        try:
+            user = _configured_user(connection, settings.user_email)
+            expires_at = now_ms() + settings.token_ttl_seconds * 1000
+            session_id = secrets.token_urlsafe(18)
+            token = create_signed_token(
+                settings,
+                session_id=session_id,
+                user_id=int(user["id"]),
+                expires_at_ms=expires_at,
+            )
+            connection.execute(
+                """
+                INSERT INTO sessions (
+                    id, user_id, token_hash, device_id, expires_at, revoked_at, created_at
+                ) VALUES (?, ?, ?, ?, ?, NULL, ?)
+                """,
+                (
+                    session_id,
+                    int(user["id"]),
+                    hash_token(token),
+                    payload.device_id,
+                    expires_at,
+                    now_ms(),
+                ),
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
 
     return LoginResponse(token=token, expiresAt=expires_at, email=settings.user_email)
 
@@ -157,15 +161,19 @@ def logout(
 ) -> dict[str, str]:
     connection = get_db(request)
     with get_db_lock(request):
-        connection.execute(
-            """
-            UPDATE sessions
-            SET revoked_at = ?
-            WHERE id = ? AND token_hash = ?
-            """,
-            (now_ms(), session.session_id, session.token_hash),
-        )
-        connection.commit()
+        try:
+            connection.execute(
+                """
+                UPDATE sessions
+                SET revoked_at = ?
+                WHERE id = ? AND token_hash = ?
+                """,
+                (now_ms(), session.session_id, session.token_hash),
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
     return {"status": "ok"}
 
 

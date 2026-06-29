@@ -1,6 +1,9 @@
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+Sha256Hex = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
 
 class ApiModel(BaseModel):
@@ -27,7 +30,7 @@ class SessionResponse(ApiModel):
 
 
 class BlobRef(ApiModel):
-    sha256: str
+    sha256: Sha256Hex
     image_key: str = Field(alias="imageKey")
     size_bytes: int = Field(alias="sizeBytes", ge=0)
     mime_type: str | None = Field(default=None, alias="mimeType")
@@ -39,6 +42,13 @@ class PushImage(ApiModel):
     updated_at: int = Field(alias="updatedAt", ge=0)
     record: dict[str, Any]
     blob: BlobRef | None = None
+
+    @model_validator(mode="after")
+    def record_uid_must_match_image_uid(self) -> "PushImage":
+        record_uid = self.record.get("uid")
+        if record_uid is not None and record_uid != self.image_uid:
+            raise ValueError("record.uid must match imageUid")
+        return self
 
 
 class PushDelete(ApiModel):
@@ -57,7 +67,10 @@ class PushRequest(ApiModel):
 class PullRequest(ApiModel):
     device_id: str = Field(alias="deviceId", min_length=1)
     cursor: int = Field(0, ge=0)
-    known_blob_sha256: list[str] = Field(default_factory=list, alias="knownBlobSha256")
+    known_blob_sha256: list[Sha256Hex] = Field(
+        default_factory=list,
+        alias="knownBlobSha256",
+    )
 
 
 class AcceptedItem(ApiModel):
@@ -80,7 +93,7 @@ class PushResponse(ApiModel):
 
 
 class PullBlob(ApiModel):
-    sha256: str
+    sha256: Sha256Hex
     image_key: str = Field(alias="imageKey")
     size_bytes: int = Field(alias="sizeBytes", ge=0)
 

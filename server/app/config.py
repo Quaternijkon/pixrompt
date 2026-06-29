@@ -31,6 +31,7 @@ class Settings:
     blob_dir: Path
     token_ttl_seconds: int = 2_592_000
     base_path: str = "/v1"
+    max_blob_bytes: int = 52_428_800
 
 
 def _normalize_base_path(value: str) -> str:
@@ -50,6 +51,25 @@ def _parse_positive_int(value: str, name: str) -> int:
     return parsed
 
 
+def _validate_token_secret(value: str) -> str:
+    secret = value.strip()
+    weak_placeholders = {
+        "<random-32-byte-or-longer-secret>",
+        "change-me",
+        "changeme",
+        "secret",
+        "password",
+        "pixrompt-token-secret",
+    }
+    if len(secret) < 32 or secret.lower() in weak_placeholders:
+        raise ConfigError(
+            "PIXROMPT_TOKEN_SECRET must be a non-placeholder secret at least 32 characters long"
+        )
+    if secret.startswith("<") and secret.endswith(">"):
+        raise ConfigError("PIXROMPT_TOKEN_SECRET must not use the example placeholder")
+    return secret
+
+
 def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
     if environ is None and load_dotenv is not None:
         load_dotenv()
@@ -64,7 +84,7 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
     return Settings(
         user_email=env["PIXROMPT_USER_EMAIL"].strip().lower(),
         password_hash=env["PIXROMPT_PASSWORD_HASH"].strip(),
-        token_secret=env["PIXROMPT_TOKEN_SECRET"].strip(),
+        token_secret=_validate_token_secret(env["PIXROMPT_TOKEN_SECRET"]),
         database_path=Path(env["PIXROMPT_DATABASE_PATH"]),
         blob_dir=Path(env["PIXROMPT_BLOB_DIR"]),
         token_ttl_seconds=_parse_positive_int(
@@ -72,4 +92,8 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
             "PIXROMPT_TOKEN_TTL_SECONDS",
         ),
         base_path=_normalize_base_path(env.get("PIXROMPT_BASE_PATH", "/v1")),
+        max_blob_bytes=_parse_positive_int(
+            env.get("PIXROMPT_MAX_BLOB_BYTES", "52428800"),
+            "PIXROMPT_MAX_BLOB_BYTES",
+        ),
     )
