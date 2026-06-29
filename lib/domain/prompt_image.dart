@@ -65,6 +65,11 @@ class PromptImageItem {
     this.parentImageUid,
     this.promptParts = const [],
     this.editHistory = const [],
+    this.originalFileName,
+    this.contentSha256,
+    this.mimeType,
+    this.importedAt,
+    this.lastSyncedAt,
   });
 
   factory PromptImageItem.sample({
@@ -82,6 +87,11 @@ class PromptImageItem {
     String? parentImageUid,
     List<String> promptParts = const [],
     List<PromptEditHistoryEntry> editHistory = const [],
+    String? originalFileName,
+    String? contentSha256,
+    String? mimeType,
+    int? importedAt,
+    int? lastSyncedAt,
   }) {
     final now = DateTime(2026, 1, 1).millisecondsSinceEpoch;
     final normalizedAssignments =
@@ -109,6 +119,11 @@ class PromptImageItem {
       parentImageUid: parentImageUid,
       promptParts: promptParts,
       editHistory: editHistory,
+      originalFileName: originalFileName,
+      contentSha256: contentSha256,
+      mimeType: mimeType,
+      importedAt: importedAt,
+      lastSyncedAt: lastSyncedAt,
     );
   }
 
@@ -155,6 +170,11 @@ class PromptImageItem {
           .whereType<Map<String, dynamic>>()
           .map(PromptEditHistoryEntry.fromJson)
           .toList(),
+      originalFileName: json['originalFileName'] as String?,
+      contentSha256: json['contentSha256'] as String?,
+      mimeType: json['mimeType'] as String?,
+      importedAt: (json['importedAt'] as num?)?.toInt(),
+      lastSyncedAt: (json['lastSyncedAt'] as num?)?.toInt(),
     );
   }
 
@@ -172,6 +192,11 @@ class PromptImageItem {
   final String? parentImageUid;
   final List<String> promptParts;
   final List<PromptEditHistoryEntry> editHistory;
+  final String? originalFileName;
+  final String? contentSha256;
+  final String? mimeType;
+  final int? importedAt;
+  final int? lastSyncedAt;
 
   List<String> get searchableTerms => [
         prompt,
@@ -199,6 +224,11 @@ class PromptImageItem {
     Object? parentImageUid = _sentinel,
     List<String>? promptParts,
     List<PromptEditHistoryEntry>? editHistory,
+    Object? originalFileName = _sentinel,
+    Object? contentSha256 = _sentinel,
+    Object? mimeType = _sentinel,
+    Object? importedAt = _sentinel,
+    Object? lastSyncedAt = _sentinel,
   }) {
     final assignments = categoryAssignments == null
         ? this.categoryAssignments
@@ -221,6 +251,18 @@ class PromptImageItem {
           : parentImageUid as String?,
       promptParts: promptParts ?? this.promptParts,
       editHistory: editHistory ?? this.editHistory,
+      originalFileName: originalFileName == _sentinel
+          ? this.originalFileName
+          : originalFileName as String?,
+      contentSha256: contentSha256 == _sentinel
+          ? this.contentSha256
+          : contentSha256 as String?,
+      mimeType: mimeType == _sentinel ? this.mimeType : mimeType as String?,
+      importedAt:
+          importedAt == _sentinel ? this.importedAt : importedAt as int?,
+      lastSyncedAt: lastSyncedAt == _sentinel
+          ? this.lastSyncedAt
+          : lastSyncedAt as int?,
     );
   }
 
@@ -240,6 +282,11 @@ class PromptImageItem {
       'parentImageUid': parentImageUid,
       'promptParts': promptParts,
       'editHistory': editHistory.map((entry) => entry.toJson()).toList(),
+      'originalFileName': originalFileName,
+      'contentSha256': contentSha256,
+      'mimeType': mimeType,
+      'importedAt': importedAt,
+      'lastSyncedAt': lastSyncedAt,
     };
   }
 }

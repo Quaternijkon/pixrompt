@@ -576,8 +576,72 @@ class PixromptController extends ChangeNotifier {
     );
   }
 
+  Future<List<PromptImageItem>> readSyncImages() async {
+    return List.unmodifiable(_state.allImages);
+  }
+
+  Future<void> applySyncUpserts(
+    Iterable<PromptImageItem> upserts, {
+    String? message,
+  }) async {
+    final incoming = upserts.where((image) => image.uid.isNotEmpty).toList();
+    if (incoming.isEmpty) return;
+    final imageMap = {for (final image in _state.allImages) image.uid: image};
+    for (final image in incoming) {
+      imageMap[image.uid] = image;
+    }
+    final images = imageMap.values.toList()
+      ..sort((a, b) {
+        final created = b.createdAt.compareTo(a.createdAt);
+        if (created != 0) return created;
+        return b.updatedAt.compareTo(a.updatedAt);
+      });
+    final settings = _settingsWithObservedAssignments(
+      _state.settings,
+      images.expand((image) => image.categoryAssignments.entries),
+    );
+    await repository.writeImages(images);
+    await repository.writeSettings(settings);
+    _setLoadedState(images: images, settings: settings, message: message);
+  }
+
+  Future<void> applySyncTombstones(
+    Iterable<String> imageUids, {
+    String? message,
+  }) async {
+    final uidSet = imageUids.where((uid) => uid.isNotEmpty).toSet();
+    if (uidSet.isEmpty) return;
+    final deleted = _state.allImages
+        .where((image) => uidSet.contains(image.uid))
+        .toList(growable: false);
+    if (deleted.isEmpty) return;
+    final images =
+        _state.allImages.where((image) => !uidSet.contains(image.uid)).toList();
+    await repository.writeImages(images);
+    for (final image in deleted) {
+      await repository.deleteImageBytes(image.imageKey);
+    }
+    _setLoadedState(
+      images: images,
+      settings: _state.settings,
+      message: message,
+    );
+  }
+
   Future<Uint8List?> imageBytes(String imageKey) {
     return repository.readImageBytes(imageKey);
+  }
+
+  Future<Uint8List?> readSyncImageBytes(String imageKey) {
+    return repository.readImageBytes(imageKey);
+  }
+
+  Future<void> writeSyncImageBytes(String imageKey, Uint8List bytes) {
+    return repository.writeImageBytes(imageKey, bytes);
+  }
+
+  Future<void> deleteSyncImageBytes(String imageKey) {
+    return repository.deleteImageBytes(imageKey);
   }
 
   PixromptActionResult _blocked(String message) {
