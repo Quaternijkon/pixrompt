@@ -89,7 +89,7 @@ void main() {
               updatedAt: 199,
             ).toJson(),
             blob: BlobRef(
-              sha256: 'remote-sha',
+              sha256: sha256Hex(Uint8List.fromList([9, 9])),
               imageKey: 'bytes-remote',
               sizeBytes: 2,
               mimeType: 'image/png',
@@ -104,7 +104,8 @@ void main() {
           ),
         ],
       )
-      ..blobDownloads['remote-sha'] = Uint8List.fromList([9, 9]);
+      ..blobDownloads[sha256Hex(Uint8List.fromList([9, 9]))] =
+          Uint8List.fromList([9, 9]);
     final sync = PixromptSyncController(
       pixromptController: gallery,
       syncStateRepository: stateRepository,
@@ -132,6 +133,21 @@ void main() {
     expect(state.knownServerVersions['remote'], 5);
     expect(state.knownServerVersions['gone'], 6);
     expect(state.lastSyncAt, 200);
+
+    api.pullResponse = const PullResponse(
+      cursor: 9,
+      serverTime: 250,
+      changes: [],
+      deleted: [],
+      missingBlobs: [],
+    );
+
+    await sync.manualSync();
+
+    expect(api.pushedRequests.last.images, isEmpty);
+    expect(gallery.state.allImages.every((image) {
+      return image.lastSyncedAt != null;
+    }), isTrue);
   });
 }
 

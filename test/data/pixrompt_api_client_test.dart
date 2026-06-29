@@ -74,6 +74,35 @@ void main() {
     );
   });
 
+  test('throws malformed for successful sync responses missing required fields',
+      () async {
+    final responses = [
+      <String, dynamic>{},
+      <String, dynamic>{},
+    ];
+    final api = PixromptApiClient(
+      apiBaseUrl: 'https://pixrompt.quaternijkon.online/v1',
+      httpClient: MockClient((request) async {
+        return http.Response(jsonEncode(responses.removeAt(0)), 200);
+      }),
+    );
+
+    expect(
+      () => api.push(
+        'token-1',
+        const PushRequest(deviceId: 'device-1', baseCursor: 0),
+      ),
+      throwsA(isA<PixromptMalformedResponseException>()),
+    );
+    expect(
+      () => api.pull(
+        'token-1',
+        const PullRequest(deviceId: 'device-1', cursor: 0),
+      ),
+      throwsA(isA<PixromptMalformedResponseException>()),
+    );
+  });
+
   test('throws malformed for successful login responses missing auth fields',
       () async {
     final responses = [

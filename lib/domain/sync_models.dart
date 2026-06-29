@@ -132,15 +132,15 @@ class PullResponse {
 
   factory PullResponse.fromJson(Map<String, dynamic> json) {
     return PullResponse(
-      cursor: _int(json, 'cursor') ?? 0,
-      serverTime: _int(json, 'serverTime') ?? 0,
-      changes: _objectList(json['changes'])
+      cursor: _requiredInt(json, 'cursor'),
+      serverTime: _requiredInt(json, 'serverTime'),
+      changes: _requiredObjectList(json, 'changes')
           .map(PullChange.fromJson)
           .toList(growable: false),
-      deleted: _objectList(json['deleted'])
+      deleted: _requiredObjectList(json, 'deleted')
           .map(SyncTombstone.fromJson)
           .toList(growable: false),
-      missingBlobs: _stringList(json['missingBlobs']),
+      missingBlobs: _requiredStringList(json, 'missingBlobs'),
     );
   }
 
@@ -288,15 +288,15 @@ class PushResponse {
 
   factory PushResponse.fromJson(Map<String, dynamic> json) {
     return PushResponse(
-      cursor: _int(json, 'cursor') ?? 0,
-      serverTime: _int(json, 'serverTime') ?? 0,
-      accepted: _objectList(json['accepted'])
+      cursor: _requiredInt(json, 'cursor'),
+      serverTime: _requiredInt(json, 'serverTime'),
+      accepted: _requiredObjectList(json, 'accepted')
           .map(AcceptedChange.fromJson)
           .toList(growable: false),
-      rejected: _objectList(json['rejected'])
+      rejected: _requiredObjectList(json, 'rejected')
           .map(RejectedChange.fromJson)
           .toList(growable: false),
-      missingBlobs: _stringList(json['missingBlobs']),
+      missingBlobs: _requiredStringList(json, 'missingBlobs'),
     );
   }
 
@@ -497,11 +497,41 @@ List<String> _stringList(Object? value) {
   return (value as List<dynamic>? ?? const []).whereType<String>().toList();
 }
 
+List<String> _requiredStringList(Map<String, dynamic> json, String key) {
+  final value = json[key];
+  if (value is! List) {
+    throw FormatException('Missing or invalid required list field: $key.');
+  }
+  final result = <String>[];
+  for (final item in value) {
+    if (item is! String) {
+      throw FormatException('Invalid string value in required list: $key.');
+    }
+    result.add(item);
+  }
+  return result;
+}
+
 List<Map<String, dynamic>> _objectList(Object? value) {
   return (value as List<dynamic>? ?? const [])
       .whereType<Map>()
       .map((entry) => entry.cast<String, dynamic>())
       .toList();
+}
+
+List<Map<String, dynamic>> _requiredObjectList(
+  Map<String, dynamic> json,
+  String key,
+) {
+  final value = json[key];
+  if (value is! List) {
+    throw FormatException('Missing or invalid required list field: $key.');
+  }
+  return value.map((item) {
+    if (item is Map<String, dynamic>) return item;
+    if (item is Map) return item.cast<String, dynamic>();
+    throw FormatException('Invalid object value in required list: $key.');
+  }).toList();
 }
 
 Map<String, dynamic> _objectMap(Object? value) {

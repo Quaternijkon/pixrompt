@@ -146,7 +146,9 @@ class PixromptSyncController extends ChangeNotifier {
     try {
       final api = _apiFor(state.apiBaseUrl);
       final local = await _prepareLocalImagesForPush(api, token, state);
-      await _pixromptController.applySyncUpserts(local.images);
+      if (local.imagesToPersist.isNotEmpty) {
+        await _pixromptController.applySyncUpserts(local.imagesToPersist);
+      }
 
       final pushResponse = await api.push(
         token,
@@ -157,7 +159,11 @@ class PixromptSyncController extends ChangeNotifier {
           deleted: state.deletedTombstones.values.toList(),
         ),
       );
-      state = await _persistPushResult(state, pushResponse);
+      state = await _persistPushResult(
+        state,
+        pushResponse,
+        local.pushedRecordsByUid,
+      );
 
       final pullResponse = await api.pull(
         token,
@@ -207,19 +213,24 @@ class PixromptSyncController extends ChangeNotifier {
     String token,
     PixromptSyncState state,
   ) async {
-    final images = <PromptImageItem>[];
+    final imagesToPersist = <PromptImageItem>[];
     final pushImages = <PushImage>[];
+    final pushedRecordsByUid = <String, PromptImageItem>{};
     final knownBlobSha256 = <String>{};
 
     for (final image in await _pixromptController.readSyncImages()) {
       final bytes = await _pixromptController.readSyncImageBytes(image.imageKey);
       BlobRef? blob;
       var record = image;
+      var needsMaintenance = false;
       if (bytes != null) {
         final contentSha256 = sha256Hex(bytes);
         final mimeType = image.mimeType ??
             guessMimeType(image.originalFileName ?? image.imageKey);
         knownBlobSha256.add(contentSha256);
+        needsMaintenance = image.contentSha256 != contentSha256 ||
+            image.mimeType == null ||
+            image.importedAt == null;
         blob = BlobRef(
           sha256: contentSha256,
           imageKey: image.imageKey,
@@ -234,7 +245,16 @@ class PixromptSyncController extends ChangeNotifier {
               ? image.fileSizeBytes
               : bytes.length,
         );
-        if (!await api.headBlob(token, contentSha256)) {
+        final shouldPush = _shouldPushLocalRecord(
+          image: image,
+          record: record,
+          state: state,
+          needsMaintenance: needsMaintenance,
+        );
+        if (needsMaintenance) {
+          imagesToPersist.add(record);
+        }
+        if (shouldPush && !await api.headBlob(token, contentSha256)) {
           await api.putBlob(
             token,
             contentSha256,
@@ -247,36 +267,65 @@ class PixromptSyncController extends ChangeNotifier {
         knownBlobSha256.add(image.contentSha256!);
       }
 
-      images.add(record);
-      pushImages.add(
-        PushImage(
-          imageUid: record.uid,
-          baseServerVersion: state.knownServerVersions[record.uid] ?? 0,
-          updatedAt: record.updatedAt,
-          record: record.toJson(),
-          blob: blob,
-        ),
+      final shouldPush = _shouldPushLocalRecord(
+        image: image,
+        record: record,
+        state: state,
+        needsMaintenance: needsMaintenance,
       );
+      if (shouldPush) {
+        pushedRecordsByUid[record.uid] = record;
+        pushImages.add(
+          PushImage(
+            imageUid: record.uid,
+            baseServerVersion: state.knownServerVersions[record.uid] ?? 0,
+            updatedAt: record.updatedAt,
+            record: record.toJson(),
+            blob: blob,
+          ),
+        );
+      }
     }
 
     return _PreparedLocalImages(
-      images: images,
+      imagesToPersist: imagesToPersist,
       pushImages: pushImages,
+      pushedRecordsByUid: pushedRecordsByUid,
       knownBlobSha256: knownBlobSha256,
     );
+  }
+
+  bool _shouldPushLocalRecord({
+    required PromptImageItem image,
+    required PromptImageItem record,
+    required PixromptSyncState state,
+    required bool needsMaintenance,
+  }) {
+    final knownServerVersion = state.knownServerVersions[record.uid];
+    return knownServerVersion == null ||
+        image.updatedAt > (image.lastSyncedAt ?? 0) ||
+        needsMaintenance;
   }
 
   Future<PixromptSyncState> _persistPushResult(
     PixromptSyncState state,
     PushResponse response,
+    Map<String, PromptImageItem> pushedRecordsByUid,
   ) async {
     final knownServerVersions =
         Map<String, int>.from(state.knownServerVersions);
     final deletedTombstones =
         Map<String, SyncTombstone>.from(state.deletedTombstones);
+    final acceptedRecords = <PromptImageItem>[];
     for (final accepted in response.accepted) {
       knownServerVersions[accepted.imageUid] = accepted.serverVersion;
       deletedTombstones.remove(accepted.imageUid);
+      final record = pushedRecordsByUid[accepted.imageUid];
+      if (record != null) {
+        acceptedRecords.add(
+          record.copyWith(lastSyncedAt: response.serverTime),
+        );
+      }
     }
     for (final rejected in response.rejected) {
       final serverVersion = rejected.serverVersion;
@@ -290,6 +339,9 @@ class PixromptSyncController extends ChangeNotifier {
       deletedTombstones: deletedTombstones,
       lastSyncAt: response.serverTime > 0 ? response.serverTime : state.lastSyncAt,
     );
+    if (acceptedRecords.isNotEmpty) {
+      await _pixromptController.applySyncUpserts(acceptedRecords);
+    }
     await _syncStateRepository.write(next);
     return next;
   }
@@ -332,11 +384,15 @@ class PixromptSyncController extends ChangeNotifier {
         image = image.copyWith(
           contentSha256: blob.sha256,
           mimeType: blob.mimeType ?? image.mimeType,
+          importedAt: image.importedAt ?? image.createdAt,
           fileSizeBytes: blob.sizeBytes,
           lastSyncedAt: syncTime,
         );
       } else {
-        image = image.copyWith(lastSyncedAt: syncTime);
+        image = image.copyWith(
+          importedAt: image.importedAt ?? image.createdAt,
+          lastSyncedAt: syncTime,
+        );
       }
       upserts.add(image);
       knownServerVersions[change.imageUid] = change.serverVersion;
@@ -406,12 +462,14 @@ String _defaultDeviceId() {
 
 class _PreparedLocalImages {
   const _PreparedLocalImages({
-    required this.images,
+    required this.imagesToPersist,
     required this.pushImages,
+    required this.pushedRecordsByUid,
     required this.knownBlobSha256,
   });
 
-  final List<PromptImageItem> images;
+  final List<PromptImageItem> imagesToPersist;
   final List<PushImage> pushImages;
+  final Map<String, PromptImageItem> pushedRecordsByUid;
   final Set<String> knownBlobSha256;
 }
