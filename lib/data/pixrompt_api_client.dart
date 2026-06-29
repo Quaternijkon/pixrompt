@@ -41,7 +41,9 @@ class PixromptApiClient implements PixromptApi {
       ),
     );
     _ensureOk(response);
-    return _parseObject(response, AuthSession.fromJson);
+    final json = _decodeObject(response);
+    json['deviceId'] ??= request.deviceId;
+    return _parseMap(json, AuthSession.fromJson);
   }
 
   @override

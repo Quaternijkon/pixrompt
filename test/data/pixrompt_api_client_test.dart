@@ -17,16 +17,16 @@ void main() {
         return http.Response(
           jsonEncode({
             'token': 'token-1',
-            'tokenExpiresAt': 123,
-            'accountEmail': 'user@example.com',
-            'deviceId': 'device-1',
+            'tokenType': 'bearer',
+            'expiresAt': 123,
+            'email': 'user@example.com',
           }),
           200,
         );
       }),
     );
 
-    await api.login(
+    final session = await api.login(
       const LoginRequest(
         email: 'user@example.com',
         password: 'secret',
@@ -36,6 +36,10 @@ void main() {
 
     expect(requestedUrls.single,
         'https://pixrompt.quaternijkon.online/v1/auth/login');
+    expect(session.token, 'token-1');
+    expect(session.tokenExpiresAt, 123);
+    expect(session.accountEmail, 'user@example.com');
+    expect(session.deviceId, 'device-1');
   });
 
   test('throws a typed unauthorized exception for 401 responses', () async {
