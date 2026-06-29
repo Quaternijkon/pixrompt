@@ -1,17 +1,21 @@
 import 'package:flutter/material.dart';
 
 import '../app/pixrompt_controller.dart';
+import '../app/pixrompt_sync_controller.dart';
 import '../platform/pixrompt_file_actions.dart';
+import 'account_sync_sheet.dart';
 import 'pixrompt_design.dart';
 
 class SettingsSheet extends StatelessWidget {
   const SettingsSheet({
     super.key,
     required this.controller,
+    required this.syncController,
     required this.fileActions,
   });
 
   final PixromptController controller;
+  final PixromptSyncController syncController;
   final PixromptFileActions fileActions;
 
   @override
@@ -42,6 +46,24 @@ class SettingsSheet extends StatelessWidget {
                     value: '${state.categoryDimensions.length}',
                   ),
                 ],
+              ),
+              const SizedBox(height: PixromptSpace.xl),
+              Text('Account', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: PixromptSpace.sm),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.tonalIcon(
+                  key: const ValueKey('settings.accountSyncAction'),
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(48),
+                  ),
+                  onPressed: () => showAccountSyncSheet(
+                    context,
+                    syncController: syncController,
+                  ),
+                  icon: const Icon(Icons.cloud_sync_outlined),
+                  label: const Text('Account and Sync'),
+                ),
               ),
               const SizedBox(height: PixromptSpace.xl),
               Text('\u6570\u636e',

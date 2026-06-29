@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app/pixrompt_controller.dart';
+import '../app/pixrompt_sync_controller.dart';
 import '../platform/pixrompt_file_actions.dart';
 import 'gallery_shell.dart';
 import 'pixrompt_design.dart';
@@ -9,10 +10,12 @@ class PixromptApp extends StatelessWidget {
   const PixromptApp({
     super.key,
     required this.controller,
+    required this.syncController,
     PixromptFileActions? fileActions,
   }) : fileActions = fileActions ?? const _DefaultFileActions();
 
   final PixromptController controller;
+  final PixromptSyncController syncController;
   final PixromptFileActions fileActions;
 
   @override
@@ -25,6 +28,7 @@ class PixromptApp extends StatelessWidget {
       themeMode: ThemeMode.dark,
       home: GalleryShell(
         controller: controller,
+        syncController: syncController,
         fileActions: fileActions,
       ),
     );

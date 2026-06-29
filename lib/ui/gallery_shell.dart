@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 
 import '../app/pixrompt_controller.dart';
+import '../app/pixrompt_sync_controller.dart';
 import '../domain/prompt_image.dart';
 import '../domain/prompt_lineage.dart';
 import '../platform/pixrompt_file_actions.dart';
@@ -21,10 +22,12 @@ class GalleryShell extends StatefulWidget {
   const GalleryShell({
     super.key,
     required this.controller,
+    required this.syncController,
     required this.fileActions,
   });
 
   final PixromptController controller;
+  final PixromptSyncController syncController;
   final PixromptFileActions fileActions;
 
   @override
@@ -270,6 +273,7 @@ class _GalleryShellState extends State<GalleryShell> {
       builder: (context) {
         return SettingsSheet(
           controller: controller,
+          syncController: widget.syncController,
           fileActions: widget.fileActions,
         );
       },

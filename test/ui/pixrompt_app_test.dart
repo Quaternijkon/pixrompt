@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pixrompt/app/pixrompt_controller.dart';
+import 'package:pixrompt/app/pixrompt_sync_controller.dart';
 import 'package:pixrompt/data/memory_pixrompt_repository.dart';
+import 'package:pixrompt/data/sync_state_repository.dart';
 import 'package:pixrompt/domain/category_dimension.dart';
 import 'package:pixrompt/domain/prompt_image.dart';
 import 'package:pixrompt/platform/pixrompt_file_actions.dart';
@@ -39,7 +41,7 @@ void main() {
     );
     await controller.initialize();
 
-    await tester.pumpWidget(PixromptApp(controller: controller));
+    await tester.pumpWidget(_app(controller));
     await tester.pump();
 
     expect(find.byKey(const ValueKey('gallery.waterfall')), findsOneWidget);
@@ -67,7 +69,7 @@ void main() {
     final controller = PixromptController(MemoryPixromptRepository());
     await controller.initialize();
 
-    await tester.pumpWidget(PixromptApp(controller: controller));
+    await tester.pumpWidget(_app(controller));
     await tester.pump();
 
     await tester.tap(find.byKey(const ValueKey('gallery.categoryAction')));
@@ -89,7 +91,7 @@ void main() {
     final controller = PixromptController(MemoryPixromptRepository());
     await controller.initialize();
 
-    await tester.pumpWidget(PixromptApp(controller: controller));
+    await tester.pumpWidget(_app(controller));
     await tester.pump();
 
     await tester.tap(find.byKey(const ValueKey('gallery.categoryAction')));
@@ -110,6 +112,21 @@ void main() {
     );
   });
 
+  testWidgets('settings exposes an Account and Sync entry', (tester) async {
+    final controller = PixromptController(MemoryPixromptRepository());
+    await controller.initialize();
+
+    await tester.pumpWidget(_app(controller));
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey('gallery.settingsAction')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Account and Sync'), findsOneWidget);
+    expect(find.byKey(const ValueKey('settings.accountSyncAction')),
+        findsOneWidget);
+  });
+
   testWidgets('adding images only asks for a prompt, not a category',
       (tester) async {
     final controller = PixromptController(
@@ -119,8 +136,8 @@ void main() {
     await controller.initialize();
 
     await tester.pumpWidget(
-      PixromptApp(
-        controller: controller,
+      _app(
+        controller,
         fileActions: _FakeFileActions([
           PickedImageLoader(
             name: 'added.png',
@@ -181,7 +198,7 @@ void main() {
     );
     await controller.initialize();
 
-    await tester.pumpWidget(PixromptApp(controller: controller));
+    await tester.pumpWidget(_app(controller));
     await tester.pump();
 
     await tester.tap(find.byKey(const ValueKey('gallery.searchAction')));
@@ -203,7 +220,7 @@ void main() {
     final controller = PixromptController(MemoryPixromptRepository());
     await controller.initialize();
 
-    await tester.pumpWidget(PixromptApp(controller: controller));
+    await tester.pumpWidget(_app(controller));
     await tester.pump();
 
     await tester.dragFrom(const Offset(20, 360), const Offset(320, 0));
@@ -241,7 +258,7 @@ void main() {
     );
     await controller.initialize();
 
-    await tester.pumpWidget(PixromptApp(controller: controller));
+    await tester.pumpWidget(_app(controller));
     await tester.pump();
 
     await tester.tap(find.byKey(const ValueKey('gallery.tile.a')));
@@ -364,7 +381,7 @@ void main() {
     );
     await controller.initialize();
 
-    await tester.pumpWidget(PixromptApp(controller: controller));
+    await tester.pumpWidget(_app(controller));
     await tester.pump();
     final tallTileTop =
         tester.getTopLeft(find.byKey(const ValueKey('gallery.tile.tall')));
@@ -426,7 +443,7 @@ void main() {
     );
     await controller.initialize();
 
-    await tester.pumpWidget(PixromptApp(controller: controller));
+    await tester.pumpWidget(_app(controller));
     await tester.pump();
 
     await tester.tap(find.byKey(const ValueKey('gallery.tile.edit')));
@@ -529,7 +546,7 @@ void main() {
     );
     await controller.initialize();
 
-    await tester.pumpWidget(PixromptApp(controller: controller));
+    await tester.pumpWidget(_app(controller));
     await tester.pump();
 
     await tester.longPress(find.byKey(const ValueKey('gallery.tile.a')));
@@ -558,6 +575,20 @@ class _FakeFileActions extends PixromptFileActions {
 
   @override
   Future<List<PickedImageLoader>> pickImageLoaders() async => loaders;
+}
+
+PixromptApp _app(
+  PixromptController controller, {
+  PixromptFileActions? fileActions,
+}) {
+  return PixromptApp(
+    controller: controller,
+    syncController: PixromptSyncController(
+      pixromptController: controller,
+      syncStateRepository: MemorySyncStateRepository(),
+    ),
+    fileActions: fileActions,
+  );
 }
 
 String Function() _uids(List<String> values) {
