@@ -35,13 +35,14 @@ class AuthSession {
   });
 
   factory AuthSession.fromJson(Map<String, dynamic> json) {
+    final accountEmail =
+        _requiredString(json, 'accountEmail', fallbackKey: 'email');
     return AuthSession(
-      token: _string(json, 'token'),
+      token: _requiredString(json, 'token'),
       tokenExpiresAt:
-          _int(json, 'tokenExpiresAt', fallbackKey: 'expiresAt') ?? 0,
-      accountEmail:
-          _string(json, 'accountEmail', fallbackKey: 'email').toLowerCase(),
-      deviceId: _string(json, 'deviceId'),
+          _requiredInt(json, 'tokenExpiresAt', fallbackKey: 'expiresAt'),
+      accountEmail: accountEmail.toLowerCase(),
+      deviceId: _requiredString(json, 'deviceId'),
     );
   }
 
@@ -458,6 +459,18 @@ String _string(
   return value is String ? value : '';
 }
 
+String _requiredString(
+  Map<String, dynamic> json,
+  String key, {
+  String? fallbackKey,
+}) {
+  final value = json[key] ?? (fallbackKey == null ? null : json[fallbackKey]);
+  if (value is String && value.trim().isNotEmpty) {
+    return value.trim();
+  }
+  throw FormatException('Missing or invalid required string field: $key.');
+}
+
 int? _int(
   Map<String, dynamic> json,
   String key, {
@@ -468,6 +481,16 @@ int? _int(
   if (value is num) return value.toInt();
   if (value is String) return int.tryParse(value);
   return null;
+}
+
+int _requiredInt(
+  Map<String, dynamic> json,
+  String key, {
+  String? fallbackKey,
+}) {
+  final value = _int(json, key, fallbackKey: fallbackKey);
+  if (value != null) return value;
+  throw FormatException('Missing or invalid required integer field: $key.');
 }
 
 List<String> _stringList(Object? value) {

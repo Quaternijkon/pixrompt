@@ -69,4 +69,75 @@ void main() {
       throwsA(isA<PixromptMalformedResponseException>()),
     );
   });
+
+  test('throws malformed for successful login responses missing auth fields',
+      () async {
+    final responses = [
+      <String, dynamic>{},
+      {
+        'token': 123,
+        'tokenExpiresAt': 'not-a-timestamp',
+        'accountEmail': '',
+      },
+    ];
+    final api = PixromptApiClient(
+      apiBaseUrl: 'https://pixrompt.quaternijkon.online/v1',
+      httpClient: MockClient((request) async {
+        return http.Response(jsonEncode(responses.removeAt(0)), 200);
+      }),
+    );
+
+    expect(
+      () => api.login(
+        const LoginRequest(
+          email: 'user@example.com',
+          password: 'secret',
+          deviceId: 'device-1',
+        ),
+      ),
+      throwsA(isA<PixromptMalformedResponseException>()),
+    );
+    expect(
+      () => api.login(
+        const LoginRequest(
+          email: 'user@example.com',
+          password: 'secret',
+          deviceId: 'device-1',
+        ),
+      ),
+      throwsA(isA<PixromptMalformedResponseException>()),
+    );
+  });
+
+  test('session injects token but rejects other malformed auth fields',
+      () async {
+    final responses = [
+      {
+        'expiresAt': 123,
+        'email': 'user@example.com',
+        'deviceId': 'device-1',
+      },
+      {
+        'expiresAt': 123,
+        'email': 'user@example.com',
+      },
+    ];
+    final api = PixromptApiClient(
+      apiBaseUrl: 'https://pixrompt.quaternijkon.online/v1',
+      httpClient: MockClient((request) async {
+        return http.Response(jsonEncode(responses.removeAt(0)), 200);
+      }),
+    );
+
+    final session = await api.session('existing-token');
+    expect(session.token, 'existing-token');
+    expect(session.tokenExpiresAt, 123);
+    expect(session.accountEmail, 'user@example.com');
+    expect(session.deviceId, 'device-1');
+
+    expect(
+      () => api.session('existing-token'),
+      throwsA(isA<PixromptMalformedResponseException>()),
+    );
+  });
 }
