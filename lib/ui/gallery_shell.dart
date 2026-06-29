@@ -153,7 +153,7 @@ class _GalleryShellState extends State<GalleryShell> {
     final count = _selectedImageUids.length;
     final deleting = _selectedImageUids.toList(growable: false);
     _clearSelection();
-    await controller.deleteImages(deleting);
+    await widget.syncController.deleteImages(deleting);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('已删除 $count 张图片。')),
@@ -228,14 +228,14 @@ class _GalleryShellState extends State<GalleryShell> {
             },
             onDelete: (current) async {
               Navigator.of(detailContext).pop();
-              await controller.deleteImage(current.uid);
+              await widget.syncController.deleteImage(current.uid);
               if (!mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: const Text('已删除。'),
                   action: SnackBarAction(
                     label: '撤销',
-                    onPressed: controller.undoLastDelete,
+                    onPressed: widget.syncController.undoLastDelete,
                   ),
                 ),
               );

@@ -116,6 +116,7 @@ class PixromptController extends ChangeNotifier {
           fileSizeBytes: picked.bytes.length,
           createdAt: now,
           updatedAt: now,
+          originalFileName: picked.name,
           parentImageUid: parentImageUid,
           promptParts: normalizedParts,
           editHistory: _historyForImage(

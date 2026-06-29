@@ -54,7 +54,6 @@ class PixromptSyncController extends ChangeNotifier {
     final baseUrl = _normalizedBaseUrl(apiBaseUrl) ?? current.apiBaseUrl;
     final deviceId =
         current.deviceId.isEmpty ? _deviceIdFactory() : current.deviceId;
-    final api = _apiFor(baseUrl);
     _setStatus(
       SyncStatus(
         isSyncing: true,
@@ -64,6 +63,7 @@ class PixromptSyncController extends ChangeNotifier {
       ),
     );
     try {
+      final api = _apiFor(baseUrl);
       final session = await api.login(
         LoginRequest(
           email: email.trim(),
@@ -101,6 +101,14 @@ class PixromptSyncController extends ChangeNotifier {
   Future<void> logout() async {
     final state = await _syncStateRepository.read();
     final token = state.token;
+    _setStatus(
+      SyncStatus(
+        isSyncing: true,
+        message: '正在退出登录。',
+        lastSyncAt: state.lastSyncAt,
+        accountEmail: state.accountEmail,
+      ),
+    );
     try {
       if (token != null && token.isNotEmpty) {
         await _apiFor(state.apiBaseUrl).logout(token);
@@ -164,6 +172,9 @@ class PixromptSyncController extends ChangeNotifier {
         state,
         pushResponse,
         local.pushedRecordsByUid,
+        api,
+        token,
+        local.blobUploadsBySha,
       );
 
       final pullResponse = await api.pull(
@@ -209,6 +220,74 @@ class PixromptSyncController extends ChangeNotifier {
     );
   }
 
+  Future<void> deleteImage(String imageUid) async {
+    if (imageUid.isEmpty) return;
+    await _recordLocalTombstones([imageUid]);
+    await _pixromptController.deleteImage(imageUid);
+  }
+
+  Future<void> deleteImages(Iterable<String> imageUids) async {
+    final uids = imageUids.where((uid) => uid.isNotEmpty).toSet();
+    if (uids.isEmpty) return;
+    await _recordLocalTombstones(uids);
+    await _pixromptController.deleteImages(uids);
+  }
+
+  Future<void> undoLastDelete() async {
+    final pending = _pixromptController.state.pendingUndo;
+    if (pending == null) return;
+    await _pixromptController.undoLastDelete();
+
+    var state = await _syncStateRepository.read();
+    final tombstones = Map<String, SyncTombstone>.from(state.deletedTombstones)
+      ..remove(pending.image.uid);
+    state = state.copyWith(deletedTombstones: tombstones);
+    await _syncStateRepository.write(state);
+
+    if (state.knownServerVersions.containsKey(pending.image.uid)) {
+      final restored = _pixromptController.state.allImages
+          .where((image) => image.uid == pending.image.uid)
+          .firstOrNull;
+      if (restored != null) {
+        await _pixromptController.applySyncUpserts([
+          restored.copyWith(
+            updatedAt: _now().millisecondsSinceEpoch,
+            lastSyncedAt: null,
+          ),
+        ]);
+      }
+    }
+  }
+
+  Future<void> _recordLocalTombstones(Iterable<String> imageUids) async {
+    final requested = imageUids.toSet();
+    if (requested.isEmpty) return;
+    final existing = (await _pixromptController.readSyncImages())
+        .where((image) => requested.contains(image.uid))
+        .map((image) => image.uid)
+        .toSet();
+    if (existing.isEmpty) return;
+
+    final state = await _syncStateRepository.read();
+    final now = _now().millisecondsSinceEpoch;
+    final tombstones = Map<String, SyncTombstone>.from(state.deletedTombstones);
+    var changed = false;
+    for (final uid in existing) {
+      final baseServerVersion = state.knownServerVersions[uid];
+      if (baseServerVersion == null) continue;
+      tombstones[uid] = SyncTombstone(
+        imageUid: uid,
+        baseServerVersion: baseServerVersion,
+        deletedAt: now,
+      );
+      changed = true;
+    }
+    if (!changed) return;
+    await _syncStateRepository.write(
+      state.copyWith(deletedTombstones: tombstones),
+    );
+  }
+
   Future<_PreparedLocalImages> _prepareLocalImagesForPush(
     PixromptApi api,
     String token,
@@ -218,6 +297,7 @@ class PixromptSyncController extends ChangeNotifier {
     final pushImages = <PushImage>[];
     final pushedRecordsByUid = <String, PromptImageItem>{};
     final knownBlobSha256 = <String>{};
+    final blobUploadsBySha = <String, _BlobUpload>{};
 
     for (final image in await _pixromptController.readSyncImages()) {
       final bytes = await _pixromptController.readSyncImageBytes(image.imageKey);
@@ -236,6 +316,10 @@ class PixromptSyncController extends ChangeNotifier {
           sha256: contentSha256,
           imageKey: image.imageKey,
           sizeBytes: bytes.length,
+          mimeType: mimeType,
+        );
+        blobUploadsBySha[contentSha256] = _BlobUpload(
+          bytes: bytes,
           mimeType: mimeType,
         );
         record = image.copyWith(
@@ -293,6 +377,7 @@ class PixromptSyncController extends ChangeNotifier {
       pushImages: pushImages,
       pushedRecordsByUid: pushedRecordsByUid,
       knownBlobSha256: knownBlobSha256,
+      blobUploadsBySha: blobUploadsBySha,
     );
   }
 
@@ -313,7 +398,17 @@ class PixromptSyncController extends ChangeNotifier {
     PixromptSyncState state,
     PushResponse response,
     Map<String, PromptImageItem> pushedRecordsByUid,
+    PixromptApi api,
+    String token,
+    Map<String, _BlobUpload> blobUploadsBySha,
   ) async {
+    await _uploadMissingBlobs(
+      api,
+      token,
+      response.missingBlobs,
+      blobUploadsBySha,
+    );
+
     final knownServerVersions =
         Map<String, int>.from(state.knownServerVersions);
     final deletedTombstones =
@@ -330,10 +425,7 @@ class PixromptSyncController extends ChangeNotifier {
       }
     }
     for (final rejected in response.rejected) {
-      final serverVersion = rejected.serverVersion;
-      if (serverVersion != null) {
-        knownServerVersions[rejected.imageUid] = serverVersion;
-      }
+      knownServerVersions[rejected.imageUid] = rejected.serverVersion;
     }
     final next = state.copyWith(
       knownServerVersions: knownServerVersions,
@@ -344,6 +436,28 @@ class PixromptSyncController extends ChangeNotifier {
     }
     await _syncStateRepository.write(next);
     return next;
+  }
+
+  Future<void> _uploadMissingBlobs(
+    PixromptApi api,
+    String token,
+    List<String> missingBlobs,
+    Map<String, _BlobUpload> blobUploadsBySha,
+  ) async {
+    for (final sha256 in missingBlobs.toSet()) {
+      final upload = blobUploadsBySha[sha256];
+      if (upload == null) {
+        throw PixromptMalformedResponseException(
+          'Pixrompt API requested a missing blob that is not available locally.',
+        );
+      }
+      await api.putBlob(
+        token,
+        sha256,
+        upload.bytes,
+        mimeType: upload.mimeType,
+      );
+    }
   }
 
   Future<PixromptSyncState> _applyPullResult(
@@ -361,6 +475,10 @@ class PixromptSyncController extends ChangeNotifier {
 
     for (final change in response.changes) {
       if (change.type != 'upsert') continue;
+      final knownVersion = knownServerVersions[change.imageUid];
+      if (knownVersion != null && change.serverVersion < knownVersion) {
+        continue;
+      }
       var image = PromptImageItem.fromJson(change.record);
       if (image.uid.isEmpty) {
         image = image.copyWith(uid: change.imageUid);
@@ -376,6 +494,11 @@ class PixromptSyncController extends ChangeNotifier {
             existingBytes == null ? null : sha256Hex(existingBytes);
         if (existingSha != blob.sha256) {
           final downloaded = await api.getBlob(token, blob.sha256);
+          if (sha256Hex(downloaded) != blob.sha256) {
+            throw PixromptMalformedResponseException(
+              'Pixrompt API returned a blob with a mismatched SHA-256.',
+            );
+          }
           await _pixromptController.writeSyncImageBytes(
             image.imageKey,
             downloaded,
@@ -405,10 +528,21 @@ class PixromptSyncController extends ChangeNotifier {
     if (response.deleted.isNotEmpty) {
       final deletedTombstones =
           Map<String, SyncTombstone>.from(state.deletedTombstones);
-      await _pixromptController.applySyncTombstones(
-        response.deleted.map((tombstone) => tombstone.imageUid),
-      );
+      final freshDeleted = <SyncTombstone>[];
       for (final tombstone in response.deleted) {
+        final knownVersion = knownServerVersions[tombstone.imageUid];
+        final serverVersion = tombstone.serverVersion;
+        if (serverVersion != null &&
+            knownVersion != null &&
+            serverVersion < knownVersion) {
+          continue;
+        }
+        freshDeleted.add(tombstone);
+      }
+      await _pixromptController.applySyncTombstones(
+        freshDeleted.map((tombstone) => tombstone.imageUid),
+      );
+      for (final tombstone in freshDeleted) {
         deletedTombstones.remove(tombstone.imageUid);
         final serverVersion = tombstone.serverVersion;
         if (serverVersion != null) {
@@ -466,10 +600,22 @@ class _PreparedLocalImages {
     required this.pushImages,
     required this.pushedRecordsByUid,
     required this.knownBlobSha256,
+    required this.blobUploadsBySha,
   });
 
   final List<PromptImageItem> imagesToPersist;
   final List<PushImage> pushImages;
   final Map<String, PromptImageItem> pushedRecordsByUid;
   final Set<String> knownBlobSha256;
+  final Map<String, _BlobUpload> blobUploadsBySha;
+}
+
+class _BlobUpload {
+  const _BlobUpload({
+    required this.bytes,
+    required this.mimeType,
+  });
+
+  final Uint8List bytes;
+  final String mimeType;
 }

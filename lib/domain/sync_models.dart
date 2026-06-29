@@ -71,9 +71,9 @@ class BlobRef {
 
   factory BlobRef.fromJson(Map<String, dynamic> json) {
     return BlobRef(
-      sha256: _string(json, 'sha256'),
-      imageKey: _string(json, 'imageKey'),
-      sizeBytes: _int(json, 'sizeBytes') ?? 0,
+      sha256: _requiredString(json, 'sha256'),
+      imageKey: _requiredString(json, 'imageKey'),
+      sizeBytes: _requiredInt(json, 'sizeBytes'),
       mimeType: json['mimeType'] as String?,
     );
   }
@@ -138,7 +138,7 @@ class PullResponse {
           .map(PullChange.fromJson)
           .toList(growable: false),
       deleted: _requiredObjectList(json, 'deleted')
-          .map(SyncTombstone.fromJson)
+          .map(SyncTombstone.fromPullJson)
           .toList(growable: false),
       missingBlobs: _requiredStringList(json, 'missingBlobs'),
     );
@@ -172,12 +172,16 @@ class PullChange {
   });
 
   factory PullChange.fromJson(Map<String, dynamic> json) {
+    final type = _requiredString(json, 'type');
+    if (type != 'upsert') {
+      throw FormatException('Unsupported pull change type: $type.');
+    }
     return PullChange(
-      type: _string(json, 'type'),
-      imageUid: _string(json, 'imageUid'),
-      serverVersion: _int(json, 'serverVersion') ?? 0,
-      updatedAt: _int(json, 'updatedAt') ?? 0,
-      record: _objectMap(json['record']),
+      type: type,
+      imageUid: _requiredString(json, 'imageUid'),
+      serverVersion: _requiredInt(json, 'serverVersion'),
+      updatedAt: _requiredInt(json, 'updatedAt'),
+      record: _requiredObjectMap(json, 'record'),
       blob: json['blob'] is Map
           ? BlobRef.fromJson(_objectMap(json['blob']))
           : null,
@@ -325,8 +329,8 @@ class AcceptedChange {
 
   factory AcceptedChange.fromJson(Map<String, dynamic> json) {
     return AcceptedChange(
-      imageUid: _string(json, 'imageUid'),
-      serverVersion: _int(json, 'serverVersion') ?? 0,
+      imageUid: _requiredString(json, 'imageUid'),
+      serverVersion: _requiredInt(json, 'serverVersion'),
     );
   }
 
@@ -345,20 +349,20 @@ class RejectedChange {
   const RejectedChange({
     required this.imageUid,
     required this.reason,
-    this.serverVersion,
+    required this.serverVersion,
   });
 
   factory RejectedChange.fromJson(Map<String, dynamic> json) {
     return RejectedChange(
-      imageUid: _string(json, 'imageUid'),
-      reason: _string(json, 'reason'),
-      serverVersion: _int(json, 'serverVersion'),
+      imageUid: _requiredString(json, 'imageUid'),
+      reason: _requiredString(json, 'reason'),
+      serverVersion: _requiredInt(json, 'serverVersion'),
     );
   }
 
   final String imageUid;
   final String reason;
-  final int? serverVersion;
+  final int serverVersion;
 
   Map<String, dynamic> toJson() {
     return {
@@ -379,10 +383,19 @@ class SyncTombstone {
 
   factory SyncTombstone.fromJson(Map<String, dynamic> json) {
     return SyncTombstone(
-      imageUid: _string(json, 'imageUid'),
-      deletedAt: _int(json, 'deletedAt') ?? 0,
+      imageUid: _requiredString(json, 'imageUid'),
+      deletedAt: _requiredInt(json, 'deletedAt'),
       baseServerVersion: _int(json, 'baseServerVersion'),
       serverVersion: _int(json, 'serverVersion'),
+    );
+  }
+
+  factory SyncTombstone.fromPullJson(Map<String, dynamic> json) {
+    return SyncTombstone(
+      imageUid: _requiredString(json, 'imageUid'),
+      deletedAt: _requiredInt(json, 'deletedAt'),
+      baseServerVersion: _int(json, 'baseServerVersion'),
+      serverVersion: _requiredInt(json, 'serverVersion'),
     );
   }
 
@@ -538,6 +551,16 @@ Map<String, dynamic> _objectMap(Object? value) {
   if (value is Map<String, dynamic>) return Map<String, dynamic>.from(value);
   if (value is Map) return value.cast<String, dynamic>();
   return <String, dynamic>{};
+}
+
+Map<String, dynamic> _requiredObjectMap(
+  Map<String, dynamic> json,
+  String key,
+) {
+  final value = json[key];
+  if (value is Map<String, dynamic>) return Map<String, dynamic>.from(value);
+  if (value is Map) return value.cast<String, dynamic>();
+  throw FormatException('Missing or invalid required object field: $key.');
 }
 
 const _sentinel = Object();

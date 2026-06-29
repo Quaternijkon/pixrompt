@@ -103,6 +103,72 @@ void main() {
     );
   });
 
+  test('throws malformed for successful sync responses with malformed items',
+      () async {
+    final responses = [
+      {
+        'cursor': 1,
+        'serverTime': 2,
+        'accepted': [
+          {'imageUid': 'image-1'}
+        ],
+        'rejected': [],
+        'missingBlobs': [],
+      },
+      {
+        'cursor': 1,
+        'serverTime': 2,
+        'changes': [
+          {
+            'type': 'upsert',
+            'imageUid': 'image-1',
+            'serverVersion': 1,
+            'updatedAt': 2,
+          }
+        ],
+        'deleted': [],
+        'missingBlobs': [],
+      },
+      {
+        'cursor': 1,
+        'serverTime': 2,
+        'changes': [],
+        'deleted': [
+          {'imageUid': 'image-1', 'deletedAt': 2}
+        ],
+        'missingBlobs': [],
+      },
+    ];
+    final api = PixromptApiClient(
+      apiBaseUrl: 'https://pixrompt.quaternijkon.online/v1',
+      httpClient: MockClient((request) async {
+        return http.Response(jsonEncode(responses.removeAt(0)), 200);
+      }),
+    );
+
+    expect(
+      () => api.push(
+        'token-1',
+        const PushRequest(deviceId: 'device-1', baseCursor: 0),
+      ),
+      throwsA(isA<PixromptMalformedResponseException>()),
+    );
+    expect(
+      () => api.pull(
+        'token-1',
+        const PullRequest(deviceId: 'device-1', cursor: 0),
+      ),
+      throwsA(isA<PixromptMalformedResponseException>()),
+    );
+    expect(
+      () => api.pull(
+        'token-1',
+        const PullRequest(deviceId: 'device-1', cursor: 0),
+      ),
+      throwsA(isA<PixromptMalformedResponseException>()),
+    );
+  });
+
   test('throws malformed for successful login responses missing auth fields',
       () async {
     final responses = [

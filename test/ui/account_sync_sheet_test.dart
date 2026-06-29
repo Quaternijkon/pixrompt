@@ -63,6 +63,37 @@ void main() {
     await tester.pump();
   });
 
+  testWidgets('invalid API base URL shows a login failure message',
+      (tester) async {
+    final gallery = PixromptController(MemoryPixromptRepository());
+    await gallery.initialize();
+    final sync = PixromptSyncController(
+      pixromptController: gallery,
+      syncStateRepository: MemorySyncStateRepository(),
+    );
+
+    await _pumpAccountSheet(tester, sync);
+    await tester.enterText(
+      find.byKey(const ValueKey('accountSync.apiBaseUrlField')),
+      'not-a-url',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('accountSync.emailField')),
+      'artist@example.test',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('accountSync.passwordField')),
+      'not-persisted-test-password',
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('accountSync.loginButton')));
+    await tester.pump();
+
+    expect(sync.status.isSyncing, isFalse);
+    expect(sync.status.message, startsWith('登录失败：'));
+    expect(find.textContaining('登录失败：'), findsOneWidget);
+  });
+
   testWidgets('signed-in state shows account, last sync, sync, and logout',
       (tester) async {
     final lastSyncAt = DateTime(2026, 6, 29, 12, 30).millisecondsSinceEpoch;
@@ -84,6 +115,31 @@ void main() {
     expect(find.byKey(const ValueKey('accountSync.logoutButton')),
         findsOneWidget);
     expect(find.text('Logout'), findsOneWidget);
+  });
+
+  testWidgets('logout button is disabled while loading', (tester) async {
+    final api = _BlockingPixromptApi();
+    final sync = await _syncController(
+      api: api,
+      initialState: const PixromptSyncState(
+        accountEmail: 'artist@example.test',
+        token: 'test-token-1',
+      ),
+    );
+
+    await _pumpAccountSheet(tester, sync);
+    await tester.tap(find.byKey(const ValueKey('accountSync.logoutButton')));
+    await tester.pump();
+
+    expect(sync.status.isSyncing, isTrue);
+    final logoutButton = tester.widget<FilledButton>(
+      find.byKey(const ValueKey('accountSync.logoutButton')),
+    );
+    expect(logoutButton.onPressed, isNull);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+
+    api.completeLogout();
+    await tester.pump();
   });
 
   testWidgets('icon-only controls keep tooltips', (tester) async {
@@ -192,10 +248,16 @@ class _ImmediatePixromptApi implements PixromptApi {
 
 class _BlockingPixromptApi extends _ImmediatePixromptApi {
   final _login = Completer<AuthSession>();
+  final _logout = Completer<void>();
 
   @override
   Future<AuthSession> login(LoginRequest request) {
     return _login.future;
+  }
+
+  @override
+  Future<void> logout(String token) {
+    return _logout.future;
   }
 
   void completeLogin(String accountEmail) {
@@ -208,5 +270,10 @@ class _BlockingPixromptApi extends _ImmediatePixromptApi {
         deviceId: 'device-1',
       ),
     );
+  }
+
+  void completeLogout() {
+    if (_logout.isCompleted) return;
+    _logout.complete();
   }
 }

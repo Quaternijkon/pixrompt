@@ -152,6 +152,9 @@ class _AccountSyncSheetState extends State<AccountSyncSheet> {
           key: const ValueKey('accountSync.passwordField'),
           controller: _passwordController,
           enabled: !loading,
+          autocorrect: false,
+          enableSuggestions: false,
+          keyboardType: TextInputType.visiblePassword,
           obscureText: _obscurePassword,
           textInputAction: TextInputAction.done,
           autofillHints: const [AutofillHints.password],
@@ -294,8 +297,9 @@ class _AccountSyncSheetState extends State<AccountSyncSheet> {
     } catch (_) {
       // The controller exposes the failure message through status.
     } finally {
+      if (!mounted) return;
       _passwordController.clear();
-      if (mounted) setState(() {});
+      setState(() {});
     }
   }
 
@@ -315,6 +319,7 @@ class _AccountSyncSheetState extends State<AccountSyncSheet> {
     } catch (_) {
       // The controller exposes the failure message through status.
     } finally {
+      if (!mounted) return;
       _passwordController.clear();
     }
   }

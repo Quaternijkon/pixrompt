@@ -125,6 +125,13 @@ void main() {
     expect(find.text('Account and Sync'), findsOneWidget);
     expect(find.byKey(const ValueKey('settings.accountSyncAction')),
         findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('settings.accountSyncAction')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('accountSync.sheet')), findsOneWidget);
+    expect(find.byKey(const ValueKey('accountSync.apiBaseUrlField')),
+        findsOneWidget);
   });
 
   testWidgets('adding images only asks for a prompt, not a category',
