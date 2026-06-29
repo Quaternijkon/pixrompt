@@ -3,9 +3,9 @@
 Cross-platform Pixrompt client for Web, Android, iOS, and macOS.
 
 Pixrompt is an offline-first prompt image gallery. Imported images, prompts,
-archives, taxonomy, privacy settings, and backups are stored locally in the
-app-owned store. License refresh, web checkout, and license activation are the
-only flows intended to contact a backend.
+taxonomy, backups, sync state, and original image bytes are stored locally in
+the app-owned store. A self-hosted optional sync backend can be used for
+single-user login and gallery synchronization across devices.
 
 ## Implemented Scope
 
@@ -24,8 +24,44 @@ only flows intended to contact a backend.
 - Prompt edit lineage with child images and generation prompt chain support.
 - JSON backup export/import with image payloads.
 - Local storage cleanup for orphaned image bytes.
-- Pro feature gates, local entitlement state, and web license backend client for
-  refresh, checkout, and activation.
+- Optional Pixrompt Sync API login and manual sync for prompt records plus
+  original image blobs.
+
+## Sync Backend
+
+The default API base URL used by the app is:
+
+```text
+https://pixrompt.quaternijkon.online/v1
+```
+
+The backend lives under `server/` and provides:
+
+- Single-user email/password login with password hash verification on the
+  backend.
+- Bearer-token sessions with server-side token hashes.
+- SQLite metadata storage for users, sessions, image records, blobs, and sync
+  events.
+- Filesystem blob storage for original image bytes, addressed by SHA-256.
+- Last-write-wins push/pull sync with server event cursors.
+
+Production secrets are not stored in the repository. Configure them in
+`/etc/pixrompt/env` on the backend host. Use
+`server/scripts/hash_password.py` to generate the password hash from the real
+password and keep only the hash in the environment file.
+
+Backend verification:
+
+```bash
+python3 -m pytest server/tests -q
+```
+
+Deployment notes and the systemd example are in:
+
+```text
+deploy/pixrompt-nginx-proxy-manager.md
+deploy/pixrompt-api.service.example
+```
 
 ## Architecture
 
@@ -67,3 +103,7 @@ flutter build apk --debug
 
 iOS and macOS project files are present. Native iOS/macOS compilation requires
 Apple tooling.
+
+This repository can be updated and the backend can be deployed on the server
+without building Flutter artifacts there. Build Android, web, iOS, or macOS on
+a separate machine with the relevant Flutter/native toolchains installed.

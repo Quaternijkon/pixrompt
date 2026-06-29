@@ -7,6 +7,8 @@ Included:
 - Flutter project sources: `lib`, `test`, `android`, `ios`, `macos`, `web`.
 - Dependency manifests: `pubspec.yaml`, `pubspec.lock`.
 - Flutter metadata and analysis config.
+- Optional sync backend sources in `server/` and deployment notes in `deploy/`
+  when this repository is moved as a full project.
 
 Excluded:
 
@@ -28,3 +30,15 @@ The app dependencies are declared in `pubspec.yaml` and are resolved from the
 Flutter SDK or pub.dev. There are no local filesystem dependencies,
 Git-sourced package dependencies, or references to the original workspace
 required for normal builds.
+
+The app defaults to the Pixrompt Sync API at:
+
+```text
+https://pixrompt.quaternijkon.online/v1
+```
+
+The backend is optional for local-only use. When enabling sync, deploy the
+backend separately, configure secrets in `/etc/pixrompt/env`, and keep the
+plaintext password out of the repository. Do not build Flutter artifacts on the
+server-only backend host unless that host also has the proper Flutter and native
+toolchains installed.

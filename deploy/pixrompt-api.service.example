@@ -1,0 +1,20 @@
+[Unit]
+Description=Pixrompt Sync API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/pixrompt
+EnvironmentFile=/etc/pixrompt/env
+ExecStart=/root/pixrompt/server/.venv/bin/uvicorn server.app.main:app --host 0.0.0.0 --port 18182
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/root/pixrompt /var/lib/pixrompt
+
+[Install]
+WantedBy=multi-user.target
