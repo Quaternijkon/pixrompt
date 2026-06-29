@@ -41,3 +41,20 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Pixrompt backend local runtime data
+server/.venv/
+server/.env
+server/.env.*
+!server/.env.example
+server/data/
+server/blobs/
+server/blob-data/
+server/*.db
+server/*.sqlite
+server/*.sqlite3
+server/**/*.db
+server/**/*.sqlite
+server/**/*.sqlite3
+server/**/__pycache__/
+server/.pytest_cache/
