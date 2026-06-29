@@ -228,6 +228,7 @@ class PixromptController extends ChangeNotifier {
           createdAt: now,
         ),
         updatedAt: now,
+        lastSyncedAt: null,
       );
     }).toList();
     final settings = _settingsWithObservedAssignments(
@@ -376,6 +377,7 @@ class PixromptController extends ChangeNotifier {
     final fromKey = normalizeCategoryTerm(from).toLowerCase();
     final normalizedTo = normalizeCategoryTerm(to);
     if (fromKey.isEmpty || normalizedTo.isEmpty) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
     final images = _state.allImages.map((image) {
       if (image.categoryLabel(dimensionId).toLowerCase() != fromKey) {
         return image;
@@ -387,6 +389,8 @@ class PixromptController extends ChangeNotifier {
         },
         category:
             dimensionId == sourceDimensionId ? normalizedTo : image.category,
+        updatedAt: now,
+        lastSyncedAt: null,
       );
     }).toList();
     final dimensions = _state.settings.categoryDimensions.map((dimension) {
@@ -410,6 +414,7 @@ class PixromptController extends ChangeNotifier {
   Future<void> deleteCategoryItem(String dimensionId, String item) async {
     final itemKey = normalizeCategoryTerm(item).toLowerCase();
     if (itemKey.isEmpty) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
     final images = _state.allImages.map((image) {
       if (image.categoryLabel(dimensionId).toLowerCase() != itemKey) {
         return image;
@@ -420,6 +425,8 @@ class PixromptController extends ChangeNotifier {
         category: dimensionId == sourceDimensionId
             ? uncategorizedCategory
             : image.category,
+        updatedAt: now,
+        lastSyncedAt: null,
       );
     }).toList();
     final dimensions = _state.settings.categoryDimensions.map((dimension) {
@@ -443,9 +450,15 @@ class PixromptController extends ChangeNotifier {
     final dimensions = _state.settings.categoryDimensions
         .where((dimension) => dimension.id != dimensionId)
         .toList();
+    final now = DateTime.now().millisecondsSinceEpoch;
     final images = _state.allImages.map((image) {
+      if (!image.categoryAssignments.containsKey(dimensionId)) return image;
       final assignments = {...image.categoryAssignments}..remove(dimensionId);
-      return image.copyWith(categoryAssignments: assignments);
+      return image.copyWith(
+        categoryAssignments: assignments,
+        updatedAt: now,
+        lastSyncedAt: null,
+      );
     }).toList();
     final settings = _state.settings.copyWith(
       categoryDimensions: normalizeCategoryDimensions(dimensions),
@@ -465,6 +478,7 @@ class PixromptController extends ChangeNotifier {
     final normalizedItem = normalizeCategoryTerm(item);
     final remove =
         normalizedItem.isEmpty || normalizedItem == uncategorizedCategory;
+    final now = DateTime.now().millisecondsSinceEpoch;
     final images = _state.allImages.map((image) {
       if (!uidSet.contains(image.uid)) return image;
       final assignments = {...image.categoryAssignments};
@@ -478,6 +492,8 @@ class PixromptController extends ChangeNotifier {
         category: dimensionId == sourceDimensionId
             ? assignments[sourceDimensionId] ?? uncategorizedCategory
             : image.category,
+        updatedAt: now,
+        lastSyncedAt: null,
       );
     }).toList();
     var settings = _state.settings;

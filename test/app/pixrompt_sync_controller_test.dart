@@ -151,6 +151,57 @@ void main() {
       return image.lastSyncedAt != null;
     }), isTrue);
   });
+
+  test('manual sync pushes locally edited records after prior sync', () async {
+    final synced = PromptImageItem.sample(
+      uid: 'local',
+      imageKey: 'bytes-local',
+      prompt: 'Synced prompt',
+      updatedAt: 100,
+      lastSyncedAt: 150,
+    );
+    final gallery = PixromptController(
+      MemoryPixromptRepository(
+        initialImages: [synced],
+        initialImageBytes: {
+          'bytes-local': Uint8List.fromList([1, 2, 3]),
+        },
+      ),
+    );
+    await gallery.initialize();
+    final stateRepository = MemorySyncStateRepository(
+      initialState: const PixromptSyncState(
+        accountEmail: 'user@example.com',
+        token: 'token-1',
+        deviceId: 'device-1',
+        cursor: 4,
+        knownServerVersions: {'local': 3},
+      ),
+    );
+    final api = _FakePixromptApi()
+      ..pullResponse = const PullResponse(
+        cursor: 5,
+        serverTime: 200,
+        changes: [],
+        deleted: [],
+        missingBlobs: [],
+      );
+    final sync = PixromptSyncController(
+      pixromptController: gallery,
+      syncStateRepository: stateRepository,
+      api: api,
+    );
+
+    await gallery.updateImage('local', prompt: 'Edited prompt');
+    await sync.manualSync();
+
+    expect(api.pushedRequests.single.images, hasLength(1));
+    final pushed = api.pushedRequests.single.images.single;
+    expect(pushed.imageUid, 'local');
+    expect(pushed.baseServerVersion, 3);
+    expect(pushed.record['prompt'], 'Edited prompt');
+    expect(gallery.state.allImages.single.lastSyncedAt, 150);
+  });
 }
 
 class _FakePixromptApi implements PixromptApi {
