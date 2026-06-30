@@ -16,6 +16,7 @@ import 'prompt_detail_sheet.dart';
 import 'prompt_editor_sheet.dart';
 import 'search_sheet.dart';
 import 'settings_sheet.dart';
+import 'sync_center_page.dart';
 import 'system_ui.dart';
 
 class GalleryShell extends StatefulWidget {
@@ -95,8 +96,11 @@ class _GalleryShellState extends State<GalleryShell> {
                   _TopRightActions(
                     key: const ValueKey('gallery.topActions'),
                     activeFilterCount: state.searchFilters.activeFilterCount(),
+                    pendingSyncCount:
+                        state.allImages.where(_pendingSync).length,
                     onCategory: () => _scaffoldKey.currentState?.openDrawer(),
                     onSearch: () => _showSearchSheet(context),
+                    onSync: () => _showSyncCenterPage(context),
                     onSettings: () => _showSettingsSheet(context),
                   ),
                 if (!_selectionMode)
@@ -277,6 +281,14 @@ class _GalleryShellState extends State<GalleryShell> {
           fileActions: widget.fileActions,
         );
       },
+    );
+  }
+
+  void _showSyncCenterPage(BuildContext context) {
+    showSyncCenterPage(
+      context,
+      controller: controller,
+      syncController: widget.syncController,
     );
   }
 
@@ -487,14 +499,18 @@ class _TopRightActions extends StatelessWidget {
   const _TopRightActions({
     super.key,
     required this.activeFilterCount,
+    required this.pendingSyncCount,
     required this.onCategory,
     required this.onSearch,
+    required this.onSync,
     required this.onSettings,
   });
 
   final int activeFilterCount;
+  final int pendingSyncCount;
   final VoidCallback onCategory;
   final VoidCallback onSearch;
+  final VoidCallback onSync;
   final VoidCallback onSettings;
 
   @override
@@ -520,6 +536,13 @@ class _TopRightActions extends StatelessWidget {
                 onPressed: onSearch,
               ),
               _OverlayIconButton(
+                buttonKey: const ValueKey('gallery.syncStatusAction'),
+                tooltip: '同步中心',
+                icon: Icons.cloud_done_outlined,
+                badgeCount: pendingSyncCount,
+                onPressed: onSync,
+              ),
+              _OverlayIconButton(
                 buttonKey: const ValueKey('gallery.settingsAction'),
                 tooltip: '设置',
                 icon: Icons.tune,
@@ -531,6 +554,10 @@ class _TopRightActions extends StatelessWidget {
       ),
     );
   }
+}
+
+bool _pendingSync(PromptImageItem image) {
+  return image.lastSyncedAt == null;
 }
 
 class _SelectionToolbar extends StatelessWidget {

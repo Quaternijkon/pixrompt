@@ -301,6 +301,93 @@ void main() {
     expect(gallery.state.allImages.single.lastSyncedAt, 150);
   });
 
+  test('manual sync reports queue progress and transfer speed', () async {
+    final local = PromptImageItem.sample(
+      uid: 'local',
+      imageKey: 'bytes-local',
+      prompt: 'Local prompt',
+      updatedAt: 100,
+    );
+    final remoteBytes = Uint8List.fromList([9, 9, 9, 9]);
+    final remoteSha = sha256Hex(remoteBytes);
+    final gallery = PixromptController(
+      MemoryPixromptRepository(
+        initialImages: [local],
+        initialImageBytes: {
+          'bytes-local': Uint8List.fromList([1, 2, 3, 4, 5, 6]),
+        },
+      ),
+    );
+    await gallery.initialize();
+    final stateRepository = MemorySyncStateRepository(
+      initialState: const PixromptSyncState(
+        accountEmail: 'user@example.com',
+        token: 'token-1',
+        deviceId: 'device-1',
+      ),
+    );
+    var nowMs = 0;
+    final api = _FakePixromptApi()
+      ..pullResponse = PullResponse(
+        cursor: 3,
+        serverTime: 7000,
+        changes: [
+          PullChange(
+            type: 'upsert',
+            imageUid: 'remote',
+            serverVersion: 4,
+            updatedAt: 199,
+            record: PromptImageItem.sample(
+              uid: 'remote',
+              imageKey: 'bytes-remote',
+              prompt: 'Remote prompt',
+            ).toJson(),
+            blob: BlobRef(
+              sha256: remoteSha,
+              imageKey: 'bytes-remote',
+              sizeBytes: remoteBytes.length,
+              mimeType: 'image/png',
+            ),
+          ),
+        ],
+      )
+      ..blobDownloads[remoteSha] = remoteBytes;
+    final sync = PixromptSyncController(
+      pixromptController: gallery,
+      syncStateRepository: stateRepository,
+      api: api,
+      now: () {
+        nowMs += 1000;
+        return DateTime.fromMillisecondsSinceEpoch(nowMs);
+      },
+    );
+    final snapshots = <SyncProgress>[];
+    sync.addListener(() {
+      final progress = sync.status.progress;
+      if (progress.queue.isNotEmpty) {
+        snapshots.add(progress);
+      }
+    });
+
+    await sync.manualSync();
+
+    expect(
+      snapshots.expand((snapshot) => snapshot.queue).map((item) => item.kind),
+      containsAll([
+        syncQueueKindUpload,
+        syncQueueKindPush,
+        syncQueueKindPull,
+        syncQueueKindDownload,
+      ]),
+    );
+    expect(
+      snapshots.any((snapshot) => snapshot.bytesPerSecond > 0),
+      isTrue,
+    );
+    expect(sync.status.progress.isActive, isFalse);
+    expect(sync.status.progress.fraction, 1);
+  });
+
   test('manual sync rejects downloaded blobs with mismatched sha256', () async {
     final expectedSha = sha256Hex(Uint8List.fromList([9, 9]));
     final gallery = PixromptController(MemoryPixromptRepository());

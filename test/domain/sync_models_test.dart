@@ -111,15 +111,83 @@ void main() {
       'message': 'Syncing',
       'lastSyncAt': 123,
       'accountEmail': 'user@example.com',
+      'progress': {
+        'isActive': true,
+        'phase': 'Uploading',
+        'startedAt': 1000,
+        'updatedAt': 3000,
+        'completedItems': 1,
+        'totalItems': 4,
+        'bytesDone': 2048,
+        'bytesTotal': 4096,
+        'queue': [
+          {
+            'id': 'upload:image-1',
+            'label': 'image-1',
+            'detail': 'Uploading blob',
+            'kind': syncQueueKindUpload,
+            'state': syncQueueStateActive,
+            'bytesDone': 1024,
+            'bytesTotal': 2048,
+          }
+        ],
+      },
     });
 
     expect(status.isSyncing, isTrue);
+    expect(status.progress.isActive, isTrue);
+    expect(status.progress.fraction, 0.5);
+    expect(status.progress.bytesPerSecond, 1024);
+    expect(status.progress.queue.single.kind, syncQueueKindUpload);
     expect(status.toJson(), {
       'isSyncing': true,
       'message': 'Syncing',
       'lastSyncAt': 123,
       'accountEmail': 'user@example.com',
+      'progress': {
+        'isActive': true,
+        'phase': 'Uploading',
+        'startedAt': 1000,
+        'updatedAt': 3000,
+        'completedItems': 1,
+        'totalItems': 4,
+        'bytesDone': 2048,
+        'bytesTotal': 4096,
+        'queue': [
+          {
+            'id': 'upload:image-1',
+            'label': 'image-1',
+            'detail': 'Uploading blob',
+            'kind': syncQueueKindUpload,
+            'state': syncQueueStateActive,
+            'bytesDone': 1024,
+            'bytesTotal': 2048,
+          }
+        ],
+      },
     });
+  });
+
+  test('sync queue items derive progress from byte counts and completion', () {
+    const active = SyncQueueItem(
+      id: 'download:image-2',
+      label: 'image-2',
+      kind: syncQueueKindDownload,
+      state: syncQueueStateActive,
+      bytesDone: 25,
+      bytesTotal: 100,
+    );
+    const completed = SyncQueueItem(
+      id: 'push',
+      label: 'Push records',
+      kind: syncQueueKindPush,
+      state: syncQueueStateComplete,
+    );
+
+    expect(active.fraction, 0.25);
+    expect(completed.fraction, 1);
+    expect(active.copyWith(state: syncQueueStateComplete).state,
+        syncQueueStateComplete);
   });
 }
 

@@ -148,17 +148,44 @@ class PixromptSyncController extends ChangeNotifier {
         message: '正在同步。',
         lastSyncAt: state.lastSyncAt,
         accountEmail: state.accountEmail,
+        progress: _newProgress('准备同步'),
       ),
     );
 
     try {
       final api = _apiFor(state.apiBaseUrl);
       final pullCursor = state.cursor;
+      _upsertQueueItem(
+        const SyncQueueItem(
+          id: 'prepare',
+          label: '扫描本地图片',
+          detail: '准备上传列表',
+          kind: syncQueueKindPrepare,
+          state: syncQueueStateActive,
+        ),
+        phase: '扫描本地图片',
+      );
       final local = await _prepareLocalImagesForPush(api, token, state);
+      _completeQueueItem(
+        'prepare',
+        detail: '本地图片已扫描',
+        phase: '本地扫描完成',
+      );
       if (local.imagesToPersist.isNotEmpty) {
         await _pixromptController.applySyncUpserts(local.imagesToPersist);
       }
 
+      _upsertQueueItem(
+        SyncQueueItem(
+          id: 'push',
+          label: '提交记录变更',
+          detail:
+              '${local.pushImages.length} 张图片，${state.deletedTombstones.length} 个删除',
+          kind: syncQueueKindPush,
+          state: syncQueueStateActive,
+        ),
+        phase: '提交记录变更',
+      );
       final pushResponse = await api.push(
         token,
         PushRequest(
@@ -168,6 +195,7 @@ class PixromptSyncController extends ChangeNotifier {
           deleted: state.deletedTombstones.values.toList(),
         ),
       );
+      _completeQueueItem('push', detail: '记录变更已提交', phase: '记录已提交');
       state = await _persistPushResult(
         state,
         pushResponse,
@@ -177,6 +205,16 @@ class PixromptSyncController extends ChangeNotifier {
         local.blobUploadsBySha,
       );
 
+      _upsertQueueItem(
+        const SyncQueueItem(
+          id: 'pull',
+          label: '拉取远端变更',
+          detail: '检查其他设备的更新',
+          kind: syncQueueKindPull,
+          state: syncQueueStateActive,
+        ),
+        phase: '拉取远端变更',
+      );
       final pullResponse = await api.pull(
         token,
         PullRequest(
@@ -185,6 +223,11 @@ class PixromptSyncController extends ChangeNotifier {
           knownBlobSha256: local.knownBlobSha256.toList(growable: false),
         ),
       );
+      _completeQueueItem(
+        'pull',
+        detail: '远端变更已拉取',
+        phase: '远端变更已拉取',
+      );
       state = await _applyPullResult(api, token, state, pullResponse);
 
       _setStatus(
@@ -192,6 +235,7 @@ class PixromptSyncController extends ChangeNotifier {
           message: '同步完成。',
           lastSyncAt: state.lastSyncAt,
           accountEmail: state.accountEmail,
+          progress: _completeProgress(phase: '同步完成'),
         ),
       );
     } catch (error) {
@@ -200,6 +244,7 @@ class PixromptSyncController extends ChangeNotifier {
           message: '同步失败：$error',
           lastSyncAt: state.lastSyncAt,
           accountEmail: state.accountEmail,
+          progress: _completeProgress(phase: '同步失败', failed: true),
         ),
       );
       rethrow;
@@ -340,11 +385,30 @@ class PixromptSyncController extends ChangeNotifier {
           imagesToPersist.add(record);
         }
         if (shouldPush && !await api.headBlob(token, contentSha256)) {
+          final queueId = 'upload:$contentSha256';
+          _upsertQueueItem(
+            SyncQueueItem(
+              id: queueId,
+              label: _imageProgressLabel(record),
+              detail: '上传原图',
+              kind: syncQueueKindUpload,
+              state: syncQueueStateActive,
+              bytesTotal: bytes.length,
+            ),
+            phase: '上传原图',
+          );
           await api.putBlob(
             token,
             contentSha256,
             bytes,
             mimeType: mimeType,
+          );
+          _completeQueueItem(
+            queueId,
+            detail: '原图已上传',
+            bytesDone: bytes.length,
+            bytesTotal: bytes.length,
+            phase: '原图上传完成',
           );
         }
       } else if (image.contentSha256 != null &&
@@ -451,11 +515,30 @@ class PixromptSyncController extends ChangeNotifier {
           'Pixrompt API requested a missing blob that is not available locally.',
         );
       }
+      final queueId = 'upload-missing:$sha256';
+      _upsertQueueItem(
+        SyncQueueItem(
+          id: queueId,
+          label: sha256.substring(0, 12),
+          detail: '补传后端缺失原图',
+          kind: syncQueueKindUpload,
+          state: syncQueueStateActive,
+          bytesTotal: upload.bytes.length,
+        ),
+        phase: '补传原图',
+      );
       await api.putBlob(
         token,
         sha256,
         upload.bytes,
         mimeType: upload.mimeType,
+      );
+      _completeQueueItem(
+        queueId,
+        detail: '缺失原图已补传',
+        bytesDone: upload.bytes.length,
+        bytesTotal: upload.bytes.length,
+        phase: '原图补传完成',
       );
     }
   }
@@ -493,6 +576,18 @@ class PixromptSyncController extends ChangeNotifier {
         final existingSha =
             existingBytes == null ? null : sha256Hex(existingBytes);
         if (existingSha != blob.sha256) {
+          final queueId = 'download:${blob.sha256}';
+          _upsertQueueItem(
+            SyncQueueItem(
+              id: queueId,
+              label: _imageProgressLabel(image),
+              detail: '下载远端原图',
+              kind: syncQueueKindDownload,
+              state: syncQueueStateActive,
+              bytesTotal: blob.sizeBytes,
+            ),
+            phase: '下载远端原图',
+          );
           final downloaded = await api.getBlob(token, blob.sha256);
           if (sha256Hex(downloaded) != blob.sha256) {
             throw PixromptMalformedResponseException(
@@ -502,6 +597,13 @@ class PixromptSyncController extends ChangeNotifier {
           await _pixromptController.writeSyncImageBytes(
             image.imageKey,
             downloaded,
+          );
+          _completeQueueItem(
+            queueId,
+            detail: '远端原图已下载',
+            bytesDone: downloaded.length,
+            bytesTotal: blob.sizeBytes,
+            phase: '远端原图下载完成',
           );
         }
         image = image.copyWith(
@@ -571,6 +673,113 @@ class PixromptSyncController extends ChangeNotifier {
     return trimmed;
   }
 
+  SyncProgress _newProgress(String phase) {
+    final now = _nowMs();
+    return SyncProgress(
+      isActive: true,
+      phase: phase,
+      startedAt: now,
+      updatedAt: now,
+    );
+  }
+
+  SyncProgress _completeProgress({
+    required String phase,
+    bool failed = false,
+  }) {
+    final queue = failed
+        ? _status.progress.queue.map((item) {
+            if (item.state != syncQueueStateActive) return item;
+            return item.copyWith(state: syncQueueStateFailed);
+          }).toList(growable: false)
+        : _status.progress.queue;
+    return _summarizeProgress(
+      _status.progress,
+      queue,
+      phase: phase,
+      isActive: false,
+    );
+  }
+
+  void _upsertQueueItem(SyncQueueItem item, {String? phase}) {
+    final queue = _status.progress.queue.toList(growable: true);
+    final index = queue.indexWhere((current) => current.id == item.id);
+    if (index < 0) {
+      queue.add(item);
+    } else {
+      queue[index] = item;
+    }
+    _setProgressQueue(queue, phase: phase);
+  }
+
+  void _completeQueueItem(
+    String id, {
+    String? detail,
+    int? bytesDone,
+    int? bytesTotal,
+    String? phase,
+  }) {
+    final queue = _status.progress.queue.map((item) {
+      if (item.id != id) return item;
+      return item.copyWith(
+        detail: detail ?? item.detail,
+        state: syncQueueStateComplete,
+        bytesDone: bytesDone ?? item.bytesDone,
+        bytesTotal: bytesTotal ?? item.bytesTotal,
+      );
+    }).toList(growable: false);
+    _setProgressQueue(queue, phase: phase);
+  }
+
+  void _setProgressQueue(List<SyncQueueItem> queue, {String? phase}) {
+    _setStatus(
+      _status.copyWith(
+        progress: _summarizeProgress(
+          _status.progress,
+          queue,
+          phase: phase,
+          isActive: true,
+        ),
+      ),
+    );
+  }
+
+  SyncProgress _summarizeProgress(
+    SyncProgress progress,
+    List<SyncQueueItem> queue, {
+    String? phase,
+    bool? isActive,
+  }) {
+    final completedItems =
+        queue.where((item) => item.state == syncQueueStateComplete).length;
+    var bytesDone = 0;
+    var bytesTotal = 0;
+    for (final item in queue) {
+      if (item.bytesTotal > 0) {
+        bytesTotal += item.bytesTotal;
+        bytesDone += item.state == syncQueueStateComplete
+            ? item.bytesTotal
+            : item.bytesDone.clamp(0, item.bytesTotal).toInt();
+      } else {
+        bytesDone += item.bytesDone;
+      }
+    }
+    return progress.copyWith(
+      isActive: isActive ?? progress.isActive,
+      phase: phase ?? progress.phase,
+      updatedAt: _nowMs(),
+      completedItems: completedItems,
+      totalItems: queue.length,
+      bytesDone: bytesDone,
+      bytesTotal: bytesTotal,
+      queue: queue,
+    );
+  }
+
+  int _nowMs() {
+    return _now().millisecondsSinceEpoch;
+  }
+
   void _setStatus(SyncStatus status) {
     _status = status;
     notifyListeners();
@@ -592,6 +801,14 @@ String guessMimeType(String name) {
 
 String _defaultDeviceId() {
   return DateTime.now().microsecondsSinceEpoch.toString();
+}
+
+String _imageProgressLabel(PromptImageItem image) {
+  final name = image.originalFileName?.trim();
+  if (name != null && name.isNotEmpty) return name;
+  final prompt = image.prompt.trim();
+  if (prompt.isNotEmpty) return prompt;
+  return image.uid;
 }
 
 class _PreparedLocalImages {

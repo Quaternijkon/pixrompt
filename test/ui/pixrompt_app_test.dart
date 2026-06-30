@@ -53,6 +53,8 @@ void main() {
     expect(find.byKey(const ValueKey('gallery.topActions')), findsOneWidget);
     expect(
         find.byKey(const ValueKey('gallery.categoryAction')), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('gallery.syncStatusAction')), findsOneWidget);
     expect(find.byKey(const ValueKey('gallery.addAction')), findsOneWidget);
     expect(find.byType(FloatingActionButton), findsNothing);
     expect(find.byType(AppBar), findsNothing);
@@ -125,6 +127,8 @@ void main() {
     expect(find.text('Account and Sync'), findsOneWidget);
     expect(find.byKey(const ValueKey('settings.accountSyncAction')),
         findsOneWidget);
+    expect(find.byKey(const ValueKey('settings.syncCenterAction')),
+        findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('settings.accountSyncAction')));
     await tester.pumpAndSettle();
@@ -132,6 +136,51 @@ void main() {
     expect(find.byKey(const ValueKey('accountSync.sheet')), findsOneWidget);
     expect(find.byKey(const ValueKey('accountSync.apiBaseUrlField')),
         findsOneWidget);
+  });
+
+  testWidgets('sync center shows image status badges and progress panels',
+      (tester) async {
+    final controller = PixromptController(
+      MemoryPixromptRepository(
+        initialImages: [
+          PromptImageItem.sample(
+            uid: 'synced',
+            imageKey: 'missing-synced',
+            prompt: 'Synced image',
+            updatedAt: 30,
+            lastSyncedAt: DateTime(2026, 6, 30, 9, 15).millisecondsSinceEpoch,
+          ),
+          PromptImageItem.sample(
+            uid: 'pending',
+            imageKey: 'missing-pending',
+            prompt: 'Pending image',
+            updatedAt: 40,
+          ),
+        ],
+      ),
+    );
+    await controller.initialize();
+
+    await tester.pumpWidget(_app(controller));
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey('gallery.syncStatusAction')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('syncCenter.page')), findsOneWidget);
+    expect(find.byKey(const ValueKey('syncCenter.progressBar')),
+        findsOneWidget);
+    expect(find.byKey(const ValueKey('syncCenter.imageList')), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('syncCenter.image.synced')), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('syncCenter.image.pending')), findsOneWidget);
+    expect(find.byKey(const ValueKey('syncCenter.imageStatus.synced')),
+        findsOneWidget);
+    expect(find.byKey(const ValueKey('syncCenter.imageStatus.pending')),
+        findsOneWidget);
+    expect(find.text('已同步'), findsWidgets);
+    expect(find.text('待同步'), findsWidgets);
   });
 
   testWidgets('adding images only asks for a prompt, not a category',

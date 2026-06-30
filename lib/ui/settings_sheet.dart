@@ -5,6 +5,7 @@ import '../app/pixrompt_sync_controller.dart';
 import '../platform/pixrompt_file_actions.dart';
 import 'account_sync_sheet.dart';
 import 'pixrompt_design.dart';
+import 'sync_center_page.dart';
 
 class SettingsSheet extends StatelessWidget {
   const SettingsSheet({
@@ -63,6 +64,25 @@ class SettingsSheet extends StatelessWidget {
                   ),
                   icon: const Icon(Icons.cloud_sync_outlined),
                   label: const Text('Account and Sync'),
+                ),
+              ),
+              const SizedBox(height: PixromptSpace.sm),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.tonalIcon(
+                  key: const ValueKey('settings.syncCenterAction'),
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(48),
+                  ),
+                  onPressed: () {
+                    showSyncCenterPage(
+                      context,
+                      controller: controller,
+                      syncController: syncController,
+                    );
+                  },
+                  icon: const Icon(Icons.cloud_done_outlined),
+                  label: const Text('Sync Center'),
                 ),
               ),
               const SizedBox(height: PixromptSpace.xl),

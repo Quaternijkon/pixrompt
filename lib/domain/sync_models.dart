@@ -414,12 +414,200 @@ class SyncTombstone {
   }
 }
 
+const syncQueueKindPrepare = 'prepare';
+const syncQueueKindUpload = 'upload';
+const syncQueueKindPush = 'push';
+const syncQueueKindPull = 'pull';
+const syncQueueKindDownload = 'download';
+const syncQueueKindDelete = 'delete';
+
+const syncQueueStateWaiting = 'waiting';
+const syncQueueStateActive = 'active';
+const syncQueueStateComplete = 'complete';
+const syncQueueStateFailed = 'failed';
+
+class SyncQueueItem {
+  const SyncQueueItem({
+    required this.id,
+    required this.label,
+    this.detail,
+    this.kind = syncQueueKindPrepare,
+    this.state = syncQueueStateWaiting,
+    this.bytesDone = 0,
+    this.bytesTotal = 0,
+  });
+
+  factory SyncQueueItem.fromJson(Map<String, dynamic> json) {
+    return SyncQueueItem(
+      id: _requiredString(json, 'id'),
+      label: _requiredString(json, 'label'),
+      detail: _string(json, 'detail').isEmpty ? null : _string(json, 'detail'),
+      kind: _string(json, 'kind').isEmpty
+          ? syncQueueKindPrepare
+          : _string(json, 'kind'),
+      state: _string(json, 'state').isEmpty
+          ? syncQueueStateWaiting
+          : _string(json, 'state'),
+      bytesDone: _int(json, 'bytesDone') ?? 0,
+      bytesTotal: _int(json, 'bytesTotal') ?? 0,
+    );
+  }
+
+  final String id;
+  final String label;
+  final String? detail;
+  final String kind;
+  final String state;
+  final int bytesDone;
+  final int bytesTotal;
+
+  double? get fraction {
+    if (bytesTotal > 0) {
+      return (bytesDone / bytesTotal).clamp(0, 1).toDouble();
+    }
+    if (state == syncQueueStateComplete) return 1;
+    if (state == syncQueueStateActive) return null;
+    return 0;
+  }
+
+  SyncQueueItem copyWith({
+    String? id,
+    String? label,
+    Object? detail = _sentinel,
+    String? kind,
+    String? state,
+    int? bytesDone,
+    int? bytesTotal,
+  }) {
+    return SyncQueueItem(
+      id: id ?? this.id,
+      label: label ?? this.label,
+      detail: detail == _sentinel ? this.detail : detail as String?,
+      kind: kind ?? this.kind,
+      state: state ?? this.state,
+      bytesDone: bytesDone ?? this.bytesDone,
+      bytesTotal: bytesTotal ?? this.bytesTotal,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'label': label,
+      'detail': detail,
+      'kind': kind,
+      'state': state,
+      'bytesDone': bytesDone,
+      'bytesTotal': bytesTotal,
+    };
+  }
+}
+
+class SyncProgress {
+  const SyncProgress({
+    this.isActive = false,
+    this.phase = '',
+    this.startedAt,
+    this.updatedAt,
+    this.completedItems = 0,
+    this.totalItems = 0,
+    this.bytesDone = 0,
+    this.bytesTotal = 0,
+    this.queue = const [],
+  });
+
+  factory SyncProgress.fromJson(Map<String, dynamic> json) {
+    return SyncProgress(
+      isActive: json['isActive'] as bool? ?? false,
+      phase: _string(json, 'phase'),
+      startedAt: _int(json, 'startedAt'),
+      updatedAt: _int(json, 'updatedAt'),
+      completedItems: _int(json, 'completedItems') ?? 0,
+      totalItems: _int(json, 'totalItems') ?? 0,
+      bytesDone: _int(json, 'bytesDone') ?? 0,
+      bytesTotal: _int(json, 'bytesTotal') ?? 0,
+      queue: _objectList(json['queue'])
+          .map(SyncQueueItem.fromJson)
+          .toList(growable: false),
+    );
+  }
+
+  final bool isActive;
+  final String phase;
+  final int? startedAt;
+  final int? updatedAt;
+  final int completedItems;
+  final int totalItems;
+  final int bytesDone;
+  final int bytesTotal;
+  final List<SyncQueueItem> queue;
+
+  double? get fraction {
+    if (totalItems > 0) {
+      return (completedItems / totalItems).clamp(0, 1).toDouble();
+    }
+    if (bytesTotal > 0) {
+      return (bytesDone / bytesTotal).clamp(0, 1).toDouble();
+    }
+    if (!isActive && queue.isNotEmpty) return 1;
+    return null;
+  }
+
+  double get bytesPerSecond {
+    final start = startedAt;
+    final updated = updatedAt;
+    if (start == null || updated == null || bytesDone <= 0) return 0;
+    final elapsedMs = updated - start;
+    if (elapsedMs <= 0) return 0;
+    return bytesDone / (elapsedMs / 1000);
+  }
+
+  SyncProgress copyWith({
+    bool? isActive,
+    String? phase,
+    Object? startedAt = _sentinel,
+    Object? updatedAt = _sentinel,
+    int? completedItems,
+    int? totalItems,
+    int? bytesDone,
+    int? bytesTotal,
+    List<SyncQueueItem>? queue,
+  }) {
+    return SyncProgress(
+      isActive: isActive ?? this.isActive,
+      phase: phase ?? this.phase,
+      startedAt: startedAt == _sentinel ? this.startedAt : startedAt as int?,
+      updatedAt: updatedAt == _sentinel ? this.updatedAt : updatedAt as int?,
+      completedItems: completedItems ?? this.completedItems,
+      totalItems: totalItems ?? this.totalItems,
+      bytesDone: bytesDone ?? this.bytesDone,
+      bytesTotal: bytesTotal ?? this.bytesTotal,
+      queue: queue ?? this.queue,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'isActive': isActive,
+      'phase': phase,
+      'startedAt': startedAt,
+      'updatedAt': updatedAt,
+      'completedItems': completedItems,
+      'totalItems': totalItems,
+      'bytesDone': bytesDone,
+      'bytesTotal': bytesTotal,
+      'queue': queue.map((item) => item.toJson()).toList(),
+    };
+  }
+}
+
 class SyncStatus {
   const SyncStatus({
     this.isSyncing = false,
     this.message,
     this.lastSyncAt,
     this.accountEmail,
+    this.progress = const SyncProgress(),
   });
 
   factory SyncStatus.fromJson(Map<String, dynamic> json) {
@@ -428,6 +616,9 @@ class SyncStatus {
       message: json['message'] as String?,
       lastSyncAt: _int(json, 'lastSyncAt'),
       accountEmail: json['accountEmail'] as String?,
+      progress: json['progress'] is Map
+          ? SyncProgress.fromJson(_objectMap(json['progress']))
+          : const SyncProgress(),
     );
   }
 
@@ -435,12 +626,14 @@ class SyncStatus {
   final String? message;
   final int? lastSyncAt;
   final String? accountEmail;
+  final SyncProgress progress;
 
   SyncStatus copyWith({
     bool? isSyncing,
     Object? message = _sentinel,
     Object? lastSyncAt = _sentinel,
     Object? accountEmail = _sentinel,
+    SyncProgress? progress,
   }) {
     return SyncStatus(
       isSyncing: isSyncing ?? this.isSyncing,
@@ -450,6 +643,7 @@ class SyncStatus {
       accountEmail: accountEmail == _sentinel
           ? this.accountEmail
           : accountEmail as String?,
+      progress: progress ?? this.progress,
     );
   }
 
@@ -459,6 +653,7 @@ class SyncStatus {
       'message': message,
       'lastSyncAt': lastSyncAt,
       'accountEmail': accountEmail,
+      'progress': progress.toJson(),
     };
   }
 }
