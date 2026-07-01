@@ -23,13 +23,15 @@ class StoredImage extends StatelessWidget {
         if (bytes == null || bytes.isEmpty) {
           return ImageFallback(backgroundColor: backgroundColor);
         }
-        return Image.memory(
-          bytes,
-          fit: fit,
-          gaplessPlayback: true,
-          errorBuilder: (context, error, stackTrace) {
-            return ImageFallback(backgroundColor: backgroundColor);
-          },
+        return ExcludeSemantics(
+          child: Image.memory(
+            bytes,
+            fit: fit,
+            gaplessPlayback: true,
+            errorBuilder: (context, error, stackTrace) {
+              return ImageFallback(backgroundColor: backgroundColor);
+            },
+          ),
         );
       },
     );
@@ -46,12 +48,14 @@ class ImageFallback extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ColoredBox(
-      color: backgroundColor,
-      child: const Center(
-        child: Icon(
-          Icons.image_not_supported_outlined,
-          color: Colors.white38,
+    return ExcludeSemantics(
+      child: ColoredBox(
+        color: backgroundColor,
+        child: const Center(
+          child: Icon(
+            Icons.image_not_supported_outlined,
+            color: Colors.white38,
+          ),
         ),
       ),
     );

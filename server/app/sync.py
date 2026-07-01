@@ -46,14 +46,14 @@ def _get_image(connection: Connection, user_id: int, image_uid: str) -> Row | No
     ).fetchone()
 
 
-def _blob_exists(connection: Connection, sha256: str) -> bool:
-    return (
-        connection.execute(
-            "SELECT 1 FROM blobs WHERE sha256 = ?",
-            (sha256,),
-        ).fetchone()
-        is not None
-    )
+def _blob_available(connection: Connection, sha256: str, blob_store) -> bool:
+    row = connection.execute(
+        "SELECT 1 FROM blobs WHERE sha256 = ?",
+        (sha256,),
+    ).fetchone()
+    if row is None:
+        return False
+    return blob_store is None or blob_store.exists(sha256)
 
 
 def _add_missing_blob(missing: list[str], seen: set[str], sha256: str) -> None:
@@ -85,6 +85,36 @@ def _insert_event(
         ),
     )
     return int(cursor.lastrowid)
+
+
+def emit_blob_available_events(
+    connection: Connection,
+    *,
+    user_id: int,
+    sha256: str,
+) -> int:
+    rows = connection.execute(
+        """
+        SELECT image_uid, server_version
+        FROM images
+        WHERE user_id = ?
+          AND content_sha256 = ?
+          AND deleted_at IS NULL
+        ORDER BY image_uid
+        """,
+        (user_id, sha256),
+    ).fetchall()
+
+    for row in rows:
+        _insert_event(
+            connection,
+            user_id=user_id,
+            image_uid=row["image_uid"],
+            server_version=int(row["server_version"]),
+            event={"type": "upsert", "imageUid": row["image_uid"]},
+        )
+
+    return len(rows)
 
 
 def _accept_image(
@@ -213,17 +243,21 @@ def _accept_delete(
     return server_version
 
 
-def _blob_for_row(connection: Connection, row: Row) -> PullBlob | None:
+def _blob_for_row(connection: Connection, row: Row, blob_store) -> PullBlob | None:
     if row["content_sha256"] is None:
         return None
     blob = connection.execute(
         "SELECT size_bytes FROM blobs WHERE sha256 = ?",
         (row["content_sha256"],),
     ).fetchone()
+    if blob is None:
+        return None
+    if blob_store is not None and not blob_store.exists(row["content_sha256"]):
+        return None
     return PullBlob(
         sha256=row["content_sha256"],
         imageKey=row["image_key"] or "",
-        sizeBytes=int(blob["size_bytes"]) if blob is not None else 0,
+        sizeBytes=int(blob["size_bytes"]),
     )
 
 
@@ -242,7 +276,11 @@ def push(
     with get_db_lock(request):
         try:
             for image in payload.images:
-                if image.blob is not None and not _blob_exists(connection, image.blob.sha256):
+                if image.blob is not None and not _blob_available(
+                    connection,
+                    image.blob.sha256,
+                    request.app.state.blob_store,
+                ):
                     _add_missing_blob(missing_blobs, missing_seen, image.blob.sha256)
 
                 existing = _get_image(connection, session.user_id, image.image_uid)
@@ -362,7 +400,7 @@ def pull(
                 )
                 continue
 
-            blob = _blob_for_row(connection, row)
+            blob = _blob_for_row(connection, row, request.app.state.blob_store)
             if blob is not None and blob.sha256 not in known_blobs:
                 _add_missing_blob(missing_blobs, missing_seen, blob.sha256)
             changes.append(

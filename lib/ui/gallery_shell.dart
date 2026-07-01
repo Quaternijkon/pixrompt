@@ -19,6 +19,9 @@ import 'settings_sheet.dart';
 import 'sync_center_page.dart';
 import 'system_ui.dart';
 
+const _galleryBottomActionPadding = 104.0;
+const _galleryBottomSelectionPadding = 112.0;
+
 class GalleryShell extends StatefulWidget {
   const GalleryShell({
     super.key,
@@ -106,16 +109,21 @@ class _GalleryShellState extends State<GalleryShell> {
                 if (!_selectionMode)
                   Positioned(
                     right: 14,
-                    bottom: 14,
-                    child: _OverlayCluster(
-                      children: [
-                        _OverlayIconButton(
-                          buttonKey: const ValueKey('gallery.addAction'),
-                          tooltip: '添加图片',
-                          icon: Icons.add_photo_alternate_outlined,
-                          onPressed: () => _startAddFlow(context),
-                        ),
-                      ],
+                    bottom: 0,
+                    child: SafeArea(
+                      top: false,
+                      left: false,
+                      minimum: const EdgeInsets.only(bottom: 14),
+                      child: _OverlayCluster(
+                        children: [
+                          _OverlayIconButton(
+                            buttonKey: const ValueKey('gallery.addAction'),
+                            tooltip: '添加图片',
+                            icon: Icons.add_photo_alternate_outlined,
+                            onPressed: () => _startAddFlow(context),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
               ],
@@ -469,7 +477,13 @@ class _GalleryWaterfall extends StatelessWidget {
     }
     return MasonryGridView.count(
       key: const ValueKey('gallery.waterfall'),
-      padding: EdgeInsets.only(top: MediaQuery.paddingOf(context).top),
+      padding: EdgeInsets.only(
+        top: MediaQuery.paddingOf(context).top,
+        bottom: MediaQuery.paddingOf(context).bottom +
+            (selectionMode
+                ? _galleryBottomSelectionPadding
+                : _galleryBottomActionPadding),
+      ),
       crossAxisCount: state.settings.columns,
       mainAxisSpacing: 0,
       crossAxisSpacing: 0,

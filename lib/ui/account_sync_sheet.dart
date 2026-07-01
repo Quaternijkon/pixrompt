@@ -80,7 +80,7 @@ class _AccountSyncSheetState extends State<AccountSyncSheet> {
                   const SizedBox(width: PixromptSpace.sm),
                   Expanded(
                     child: Text(
-                      'Account and Sync',
+                      '账号与同步',
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
                   ),
@@ -88,7 +88,7 @@ class _AccountSyncSheetState extends State<AccountSyncSheet> {
               ),
               const SizedBox(height: PixromptSpace.sm),
               Text(
-                'Sign in to sync this library across devices.',
+                '登录后在设备间同步这个图库。',
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
               const SizedBox(height: PixromptSpace.lg),
@@ -130,7 +130,7 @@ class _AccountSyncSheetState extends State<AccountSyncSheet> {
           textInputAction: TextInputAction.next,
           autofillHints: const [AutofillHints.url],
           decoration: const InputDecoration(
-            labelText: 'API Base URL',
+            labelText: 'API 基础地址',
             prefixIcon: Icon(Icons.link),
           ),
         ),
@@ -143,7 +143,7 @@ class _AccountSyncSheetState extends State<AccountSyncSheet> {
           textInputAction: TextInputAction.next,
           autofillHints: const [AutofillHints.email],
           decoration: const InputDecoration(
-            labelText: 'Email',
+            labelText: '邮箱',
             prefixIcon: Icon(Icons.alternate_email),
           ),
         ),
@@ -162,10 +162,10 @@ class _AccountSyncSheetState extends State<AccountSyncSheet> {
             if (canLogin) _submitLogin();
           },
           decoration: InputDecoration(
-            labelText: 'Password',
+            labelText: '密码',
             prefixIcon: const Icon(Icons.lock_outline),
             suffixIcon: IconButton(
-              tooltip: _obscurePassword ? 'Show password' : 'Hide password',
+              tooltip: _obscurePassword ? '显示密码' : '隐藏密码',
               onPressed: loading
                   ? null
                   : () {
@@ -193,11 +193,11 @@ class _AccountSyncSheetState extends State<AccountSyncSheet> {
                   dimension: 18,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    semanticsLabel: 'Logging in',
+                    semanticsLabel: '登录中',
                   ),
                 )
               : const Icon(Icons.login),
-          label: Text(loading ? 'Logging in' : 'Login'),
+          label: Text(loading ? '登录中' : '登录'),
         ),
       ],
     );
@@ -228,7 +228,7 @@ class _AccountSyncSheetState extends State<AccountSyncSheet> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        'Signed in as',
+                        '已登录账号',
                         style: Theme.of(context).textTheme.labelLarge,
                       ),
                       const SizedBox(height: PixromptSpace.xs),
@@ -264,20 +264,20 @@ class _AccountSyncSheetState extends State<AccountSyncSheet> {
                       dimension: 18,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        semanticsLabel: 'Syncing',
+                        semanticsLabel: '同步中',
                       ),
                     )
                   : const Icon(Icons.sync),
-              label: Text(loading ? 'Syncing' : 'Sync Now'),
+              label: Text(loading ? '同步中' : '立即同步'),
             ),
             FilledButton.tonalIcon(
               key: const ValueKey('accountSync.logoutButton'),
               style: FilledButton.styleFrom(
                 minimumSize: const Size(48, 48),
               ),
-              onPressed: loading ? null : _logout,
+              onPressed: _logout,
               icon: const Icon(Icons.logout),
-              label: const Text('Logout'),
+              label: const Text('退出登录'),
             ),
           ],
         ),
@@ -313,7 +313,6 @@ class _AccountSyncSheetState extends State<AccountSyncSheet> {
   }
 
   Future<void> _logout() async {
-    if (widget.syncController.status.isSyncing) return;
     try {
       await widget.syncController.logout();
     } catch (_) {
@@ -354,9 +353,9 @@ class _StatusMessage extends StatelessWidget {
 }
 
 String _lastSyncLabel(int? millisecondsSinceEpoch) {
-  if (millisecondsSinceEpoch == null) return 'Last sync: Never';
+  if (millisecondsSinceEpoch == null) return '上次同步：尚未同步';
   final value = DateTime.fromMillisecondsSinceEpoch(millisecondsSinceEpoch);
-  return 'Last sync: ${_four(value.year)}-${_two(value.month)}-'
+  return '上次同步：${_four(value.year)}-${_two(value.month)}-'
       '${_two(value.day)} ${_two(value.hour)}:${_two(value.minute)}';
 }
 

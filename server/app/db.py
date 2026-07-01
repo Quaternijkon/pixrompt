@@ -5,10 +5,21 @@ from server.app.config import Settings
 from server.app.security import now_ms
 
 
+BUSY_TIMEOUT_MS = 5_000
+SYNCHRONOUS_POLICY = "NORMAL"
+
+
 def connect(database_path: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(database_path, check_same_thread=False)
+    connection = sqlite3.connect(
+        database_path,
+        check_same_thread=False,
+        timeout=BUSY_TIMEOUT_MS / 1000,
+    )
     connection.row_factory = sqlite3.Row
+    connection.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
     connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute("PRAGMA journal_mode = WAL")
+    connection.execute(f"PRAGMA synchronous = {SYNCHRONOUS_POLICY}")
     return connection
 
 
@@ -96,3 +107,40 @@ def current_cursor(connection: sqlite3.Connection, user_id: int) -> int:
         (user_id,),
     ).fetchone()
     return int(row["cursor"])
+
+
+def image_blob_integrity_issues(
+    connection: sqlite3.Connection,
+    blob_dir: Path | None = None,
+) -> list[dict[str, str]]:
+    rows = connection.execute(
+        """
+        SELECT images.image_uid, images.content_sha256, blobs.storage_path
+        FROM images
+        LEFT JOIN blobs ON blobs.sha256 = images.content_sha256
+        WHERE images.content_sha256 IS NOT NULL
+          AND images.deleted_at IS NULL
+        ORDER BY images.image_uid
+        """
+    ).fetchall()
+    issues: list[dict[str, str]] = []
+    for row in rows:
+        sha256 = row["content_sha256"]
+        if row["storage_path"] is None:
+            issues.append(
+                {
+                    "image_uid": row["image_uid"],
+                    "sha256": sha256,
+                    "reason": "missing_blob_row",
+                }
+            )
+            continue
+        if blob_dir is not None and not (blob_dir / row["storage_path"]).is_file():
+            issues.append(
+                {
+                    "image_uid": row["image_uid"],
+                    "sha256": sha256,
+                    "reason": "missing_blob_file",
+                }
+            )
+    return issues

@@ -114,7 +114,7 @@ void main() {
     );
   });
 
-  testWidgets('settings exposes an Account and Sync entry', (tester) async {
+  testWidgets('settings exposes an account and sync entry', (tester) async {
     final controller = PixromptController(MemoryPixromptRepository());
     await controller.initialize();
 
@@ -124,7 +124,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('gallery.settingsAction')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Account and Sync'), findsOneWidget);
+    expect(find.text('账号与同步'), findsOneWidget);
     expect(find.byKey(const ValueKey('settings.accountSyncAction')),
         findsOneWidget);
     expect(find.byKey(const ValueKey('settings.syncCenterAction')),
@@ -637,12 +637,14 @@ PixromptApp _app(
   PixromptController controller, {
   PixromptFileActions? fileActions,
 }) {
+  final syncController = PixromptSyncController(
+    pixromptController: controller,
+    syncStateRepository: MemorySyncStateRepository(),
+  );
+  addTearDown(syncController.dispose);
   return PixromptApp(
     controller: controller,
-    syncController: PixromptSyncController(
-      pixromptController: controller,
-      syncStateRepository: MemorySyncStateRepository(),
-    ),
+    syncController: syncController,
     fileActions: fileActions,
   );
 }

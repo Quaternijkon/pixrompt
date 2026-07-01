@@ -572,11 +572,69 @@ class PixromptController extends ChangeNotifier {
   Future<void> importBackupJson(String jsonText) async {
     final backup = PromptBackupCodec.decode(jsonText);
     final imageMap = {for (final image in _state.allImages) image.uid: image};
+    final protectedImageKeys = <String>{};
     for (final image in backup.images) {
-      imageMap[image.uid] = image;
+      final existing = imageMap[image.uid];
+      if (existing != null && existing.updatedAt > image.updatedAt) {
+        if (existing.imageKey.isNotEmpty) {
+          protectedImageKeys.add(existing.imageKey);
+        }
+      }
+    }
+
+    final reservedImageKeys = _state.allImages
+        .map((image) => image.imageKey)
+        .where((imageKey) => imageKey.isNotEmpty)
+        .toSet();
+    final reservedImageKeyOwners = {
+      for (final image in _state.allImages)
+        if (image.imageKey.isNotEmpty) image.imageKey: image.uid,
+    };
+    final acceptedPayloadTargets = <String, Set<String>>{};
+    for (final image in backup.images) {
+      final existing = imageMap[image.uid];
+      if (existing != null && existing.updatedAt > image.updatedAt) {
+        continue;
+      }
+      final sourceImageKey = image.imageKey;
+      var pendingImport = image.copyWith(lastSyncedAt: null);
+      final reservedOwner = reservedImageKeyOwners[sourceImageKey];
+      final collidesWithOtherImage =
+          reservedOwner != null && reservedOwner != pendingImport.uid;
+      final needsRemappedPayloadKey = sourceImageKey.isNotEmpty &&
+          (protectedImageKeys.contains(sourceImageKey) ||
+              collidesWithOtherImage);
+      if (needsRemappedPayloadKey) {
+        if (!backup.imageBytesByKey.containsKey(sourceImageKey)) {
+          continue;
+        }
+        pendingImport = pendingImport.copyWith(
+          imageKey: _uniqueImportedImageKey(
+            sourceImageKey: sourceImageKey,
+            imageUid: pendingImport.uid,
+            reservedImageKeys: reservedImageKeys,
+          ),
+        );
+      } else if (pendingImport.imageKey.isNotEmpty) {
+        reservedImageKeys.add(pendingImport.imageKey);
+      }
+      if (pendingImport.imageKey.isNotEmpty) {
+        reservedImageKeyOwners[pendingImport.imageKey] = pendingImport.uid;
+      }
+      imageMap[pendingImport.uid] = pendingImport;
+      if (sourceImageKey.isNotEmpty && pendingImport.imageKey.isNotEmpty) {
+        acceptedPayloadTargets
+            .putIfAbsent(sourceImageKey, () => <String>{})
+            .add(pendingImport.imageKey);
+      }
     }
     for (final entry in backup.imageBytesByKey.entries) {
-      await repository.writeImageBytes(entry.key, entry.value);
+      final targets = acceptedPayloadTargets[entry.key];
+      if (targets == null) continue;
+      for (final imageKey in targets) {
+        if (protectedImageKeys.contains(imageKey)) continue;
+        await repository.writeImageBytes(imageKey, entry.value);
+      }
     }
     final images = imageMap.values.toList()
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
@@ -759,6 +817,24 @@ class PixromptController extends ChangeNotifier {
       result.add(prompt);
     }
     return result;
+  }
+
+  String _uniqueImportedImageKey({
+    required String sourceImageKey,
+    required String imageUid,
+    required Set<String> reservedImageKeys,
+  }) {
+    final base = sourceImageKey.trim().isEmpty
+        ? 'image-$imageUid'
+        : sourceImageKey.trim();
+    var candidate = '$base-import-$imageUid';
+    var suffix = 2;
+    while (reservedImageKeys.contains(candidate)) {
+      candidate = '$base-import-$imageUid-$suffix';
+      suffix += 1;
+    }
+    reservedImageKeys.add(candidate);
+    return candidate;
   }
 
   List<PromptEditHistoryEntry> _historyForImage({

@@ -607,6 +607,7 @@ class SyncStatus {
     this.message,
     this.lastSyncAt,
     this.accountEmail,
+    this.pendingDeletionCount = 0,
     this.progress = const SyncProgress(),
   });
 
@@ -616,6 +617,7 @@ class SyncStatus {
       message: json['message'] as String?,
       lastSyncAt: _int(json, 'lastSyncAt'),
       accountEmail: json['accountEmail'] as String?,
+      pendingDeletionCount: _int(json, 'pendingDeletionCount') ?? 0,
       progress: json['progress'] is Map
           ? SyncProgress.fromJson(_objectMap(json['progress']))
           : const SyncProgress(),
@@ -626,6 +628,7 @@ class SyncStatus {
   final String? message;
   final int? lastSyncAt;
   final String? accountEmail;
+  final int pendingDeletionCount;
   final SyncProgress progress;
 
   SyncStatus copyWith({
@@ -633,6 +636,7 @@ class SyncStatus {
     Object? message = _sentinel,
     Object? lastSyncAt = _sentinel,
     Object? accountEmail = _sentinel,
+    int? pendingDeletionCount,
     SyncProgress? progress,
   }) {
     return SyncStatus(
@@ -643,6 +647,7 @@ class SyncStatus {
       accountEmail: accountEmail == _sentinel
           ? this.accountEmail
           : accountEmail as String?,
+      pendingDeletionCount: pendingDeletionCount ?? this.pendingDeletionCount,
       progress: progress ?? this.progress,
     );
   }
@@ -653,6 +658,7 @@ class SyncStatus {
       'message': message,
       'lastSyncAt': lastSyncAt,
       'accountEmail': accountEmail,
+      if (pendingDeletionCount > 0) 'pendingDeletionCount': pendingDeletionCount,
       'progress': progress.toJson(),
     };
   }

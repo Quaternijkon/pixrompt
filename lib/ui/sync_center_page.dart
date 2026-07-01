@@ -80,6 +80,7 @@ class SyncCenterPage extends StatelessWidget {
                   total: images.length,
                   synced: synced,
                   pending: pending,
+                  pendingDeletions: status.pendingDeletionCount,
                   status: status,
                 ),
                 const SizedBox(height: PixromptSpace.lg),
@@ -108,12 +109,14 @@ class _SyncSummaryBand extends StatelessWidget {
     required this.total,
     required this.synced,
     required this.pending,
+    required this.pendingDeletions,
     required this.status,
   });
 
   final int total;
   final int synced;
   final int pending;
+  final int pendingDeletions;
   final SyncStatus status;
 
   @override
@@ -149,32 +152,61 @@ class _SyncSummaryBand extends StatelessWidget {
               ],
             ),
             const SizedBox(height: PixromptSpace.md),
-            Row(
-              children: [
-                Expanded(
-                  child: _SummaryMetric(
-                    label: '全部',
-                    value: '$total',
-                    icon: Icons.photo_library_outlined,
-                  ),
-                ),
-                const SizedBox(width: PixromptSpace.sm),
-                Expanded(
-                  child: _SummaryMetric(
-                    label: '已同步',
-                    value: '$synced',
-                    icon: Icons.check_circle_outline,
-                  ),
-                ),
-                const SizedBox(width: PixromptSpace.sm),
-                Expanded(
-                  child: _SummaryMetric(
-                    label: '待同步',
-                    value: '$pending',
-                    icon: Icons.cloud_upload_outlined,
-                  ),
-                ),
-              ],
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final maxWidth =
+                    constraints.hasBoundedWidth ? constraints.maxWidth : 560.0;
+                final columnCount = maxWidth >= 560 ? 4 : 2;
+                final metricWidth = ((maxWidth -
+                            PixromptSpace.sm * (columnCount - 1)) /
+                        columnCount)
+                    .clamp(0.0, double.infinity)
+                    .toDouble();
+                return Wrap(
+                  spacing: PixromptSpace.sm,
+                  runSpacing: PixromptSpace.sm,
+                  children: [
+                    SizedBox(
+                      key: const ValueKey('syncCenter.metric.total'),
+                      width: metricWidth,
+                      child: _SummaryMetric(
+                        label: '全部',
+                        value: '$total',
+                        icon: Icons.photo_library_outlined,
+                      ),
+                    ),
+                    SizedBox(
+                      key: const ValueKey('syncCenter.metric.synced'),
+                      width: metricWidth,
+                      child: _SummaryMetric(
+                        label: '已同步',
+                        value: '$synced',
+                        icon: Icons.check_circle_outline,
+                      ),
+                    ),
+                    SizedBox(
+                      key: const ValueKey('syncCenter.metric.pending'),
+                      width: metricWidth,
+                      child: _SummaryMetric(
+                        label: '待同步',
+                        value: '$pending',
+                        icon: Icons.cloud_upload_outlined,
+                      ),
+                    ),
+                    SizedBox(
+                      key: const ValueKey(
+                        'syncCenter.metric.pendingDeletions',
+                      ),
+                      width: metricWidth,
+                      child: _SummaryMetric(
+                        label: '待删除',
+                        value: '$pendingDeletions',
+                        icon: Icons.delete_outline,
+                      ),
+                    ),
+                  ],
+                );
+              },
             ),
             const SizedBox(height: PixromptSpace.md),
             Text(
@@ -242,11 +274,17 @@ class _ProgressPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          LinearProgressIndicator(
-            key: const ValueKey('syncCenter.progressBar'),
-            value: progress.isActive ? fraction : fraction ?? 0,
-            minHeight: 6,
-            borderRadius: BorderRadius.circular(99),
+          Semantics(
+            label: '同步进度',
+            value: _progressSemanticsValue(progress),
+            child: ExcludeSemantics(
+              child: LinearProgressIndicator(
+                key: const ValueKey('syncCenter.progressBar'),
+                value: progress.isActive ? fraction : fraction ?? 0,
+                minHeight: 6,
+                borderRadius: BorderRadius.circular(99),
+              ),
+            ),
           ),
           const SizedBox(height: PixromptSpace.md),
           Wrap(
@@ -667,8 +705,14 @@ String _lastSyncLabel(int? value) {
   if (value == null) return '尚未同步';
   final time = DateTime.fromMillisecondsSinceEpoch(value);
   String two(int number) => number.toString().padLeft(2, '0');
-  return 'Last sync: ${time.year}-${two(time.month)}-${two(time.day)} '
+  return '上次同步：${time.year}-${two(time.month)}-${two(time.day)} '
       '${two(time.hour)}:${two(time.minute)}';
+}
+
+String _progressSemanticsValue(SyncProgress progress) {
+  final phase = progress.phase.isEmpty ? '空闲' : progress.phase;
+  return '$phase，${progress.completedItems}/${progress.totalItems}，'
+      '${_formatBytes(progress.bytesDone)} / ${_formatBytes(progress.bytesTotal)}';
 }
 
 String _formatSpeed(double bytesPerSecond) {

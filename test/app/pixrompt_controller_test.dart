@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pixrompt/app/pixrompt_controller.dart';
 import 'package:pixrompt/data/memory_pixrompt_repository.dart';
+import 'package:pixrompt/domain/backup.dart';
 import 'package:pixrompt/domain/category_dimension.dart';
 import 'package:pixrompt/domain/prompt_image.dart';
 import 'package:pixrompt/domain/search_filters.dart';
@@ -240,6 +241,217 @@ void main() {
           .readImageBytes(target.state.allImages.single.imageKey),
       [1, 2, 3],
     );
+  });
+
+  test('backup import keeps newer local image record and payload', () async {
+    final repository = MemoryPixromptRepository(
+      initialImages: [
+        PromptImageItem.sample(
+          uid: 'image-1',
+          imageKey: 'image-shared',
+          prompt: 'Local newer prompt',
+          createdAt: 100,
+          updatedAt: 2_000,
+          lastSyncedAt: 1_900,
+        ),
+      ],
+      initialImageBytes: {
+        'image-shared': Uint8List.fromList([9, 9]),
+      },
+    );
+    final controller = PixromptController(repository);
+    await controller.initialize();
+    final backup = PromptBackupCodec.encode(
+      images: [
+        PromptImageItem.sample(
+          uid: 'image-1',
+          imageKey: 'image-shared',
+          prompt: 'Older backup prompt',
+          createdAt: 100,
+          updatedAt: 1_000,
+          lastSyncedAt: 1_000,
+        ),
+      ],
+      imageBytesByKey: {
+        'image-shared': Uint8List.fromList([1, 2]),
+      },
+    );
+
+    await controller.importBackupJson(backup);
+
+    final image = controller.state.allImages.single;
+    expect(image.prompt, 'Local newer prompt');
+    expect(image.updatedAt, 2_000);
+    expect(image.lastSyncedAt, 1_900);
+    expect(await repository.readImageBytes('image-shared'), [9, 9]);
+  });
+
+  test('backup import preserves protected local bytes on image key collision',
+      () async {
+    final repository = MemoryPixromptRepository(
+      initialImages: [
+        PromptImageItem.sample(
+          uid: 'local-newer',
+          imageKey: 'image-shared',
+          prompt: 'Protected local prompt',
+          createdAt: 100,
+          updatedAt: 3_000,
+          lastSyncedAt: 2_900,
+        ),
+      ],
+      initialImageBytes: {
+        'image-shared': Uint8List.fromList([9, 9]),
+      },
+    );
+    final controller = PixromptController(repository);
+    await controller.initialize();
+    final backup = PromptBackupCodec.encode(
+      images: [
+        PromptImageItem.sample(
+          uid: 'local-newer',
+          imageKey: 'image-shared',
+          prompt: 'Older backup prompt',
+          createdAt: 100,
+          updatedAt: 1_000,
+          lastSyncedAt: 1_000,
+        ),
+        PromptImageItem.sample(
+          uid: 'backup-other',
+          imageKey: 'image-shared',
+          prompt: 'Accepted backup prompt',
+          createdAt: 200,
+          updatedAt: 2_000,
+          lastSyncedAt: 2_000,
+        ),
+      ],
+      imageBytesByKey: {
+        'image-shared': Uint8List.fromList([1, 2]),
+      },
+    );
+
+    await controller.importBackupJson(backup);
+
+    final protected = controller.state.allImages.firstWhere(
+      (image) => image.uid == 'local-newer',
+    );
+    final imported = controller.state.allImages.firstWhere(
+      (image) => image.uid == 'backup-other',
+    );
+    expect(protected.prompt, 'Protected local prompt');
+    expect(protected.imageKey, 'image-shared');
+    expect(await repository.readImageBytes('image-shared'), [9, 9]);
+    expect(imported.prompt, 'Accepted backup prompt');
+    expect(imported.lastSyncedAt, isNull);
+    expect(imported.imageKey, isNot('image-shared'));
+    expect(await repository.readImageBytes(imported.imageKey), [1, 2]);
+  });
+
+  test('backup import remaps new image keys that collide with local records',
+      () async {
+    final repository = MemoryPixromptRepository(
+      initialImages: [
+        PromptImageItem.sample(
+          uid: 'local-keep',
+          imageKey: 'image-shared',
+          prompt: 'Keep local bytes',
+          createdAt: 100,
+          updatedAt: 1_000,
+        ),
+      ],
+      initialImageBytes: {
+        'image-shared': Uint8List.fromList([9, 9]),
+      },
+    );
+    final controller = PixromptController(repository);
+    await controller.initialize();
+    final backup = PromptBackupCodec.encode(
+      images: [
+        PromptImageItem.sample(
+          uid: 'backup-new',
+          imageKey: 'image-shared',
+          prompt: 'Accepted backup prompt',
+          createdAt: 200,
+          updatedAt: 2_000,
+          lastSyncedAt: 2_000,
+        ),
+      ],
+      imageBytesByKey: {
+        'image-shared': Uint8List.fromList([1, 2]),
+      },
+    );
+
+    await controller.importBackupJson(backup);
+
+    final local = controller.state.allImages.firstWhere(
+      (image) => image.uid == 'local-keep',
+    );
+    final imported = controller.state.allImages.firstWhere(
+      (image) => image.uid == 'backup-new',
+    );
+    expect(local.imageKey, 'image-shared');
+    expect(await repository.readImageBytes('image-shared'), [9, 9]);
+    expect(imported.imageKey, isNot('image-shared'));
+    expect(imported.lastSyncedAt, isNull);
+    expect(await repository.readImageBytes(imported.imageKey), [1, 2]);
+  });
+
+  test('backup import accepts newer and new images as pending sync', () async {
+    final repository = MemoryPixromptRepository(
+      initialImages: [
+        PromptImageItem.sample(
+          uid: 'image-1',
+          imageKey: 'image-existing',
+          prompt: 'Local older prompt',
+          createdAt: 100,
+          updatedAt: 1_000,
+          lastSyncedAt: 1_000,
+        ),
+      ],
+      initialImageBytes: {
+        'image-existing': Uint8List.fromList([1]),
+      },
+    );
+    final controller = PixromptController(repository);
+    await controller.initialize();
+    final backup = PromptBackupCodec.encode(
+      images: [
+        PromptImageItem.sample(
+          uid: 'image-1',
+          imageKey: 'image-existing',
+          prompt: 'Newer backup prompt',
+          createdAt: 100,
+          updatedAt: 2_000,
+          lastSyncedAt: 2_000,
+        ),
+        PromptImageItem.sample(
+          uid: 'image-2',
+          imageKey: 'image-new',
+          prompt: 'New backup prompt',
+          createdAt: 300,
+          updatedAt: 3_000,
+          lastSyncedAt: 3_000,
+        ),
+      ],
+      imageBytesByKey: {
+        'image-existing': Uint8List.fromList([7]),
+        'image-new': Uint8List.fromList([8]),
+      },
+    );
+
+    await controller.importBackupJson(backup);
+
+    final replaced = controller.state.allImages.firstWhere(
+      (image) => image.uid == 'image-1',
+    );
+    final added = controller.state.allImages.firstWhere(
+      (image) => image.uid == 'image-2',
+    );
+    expect(replaced.prompt, 'Newer backup prompt');
+    expect(replaced.lastSyncedAt, isNull);
+    expect(added.prompt, 'New backup prompt');
+    expect(added.lastSyncedAt, isNull);
+    expect(await repository.readImageBytes('image-existing'), [7]);
+    expect(await repository.readImageBytes('image-new'), [8]);
   });
 
   test('adds prompt edits as child images with prompt chain and categories',

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
@@ -17,13 +18,17 @@ class PixromptSyncController extends ChangeNotifier {
     PixromptApi Function(String apiBaseUrl)? apiFactory,
     DateTime Function()? now,
     String Function()? deviceIdFactory,
+    Duration autoSyncDebounce = const Duration(seconds: 2),
   })  : _pixromptController = pixromptController,
         _syncStateRepository = syncStateRepository,
         _api = api,
         _apiFactory = apiFactory ??
             ((apiBaseUrl) => PixromptApiClient(apiBaseUrl: apiBaseUrl)),
         _now = now ?? DateTime.now,
-        _deviceIdFactory = deviceIdFactory ?? _defaultDeviceId;
+        _deviceIdFactory = deviceIdFactory ?? _defaultDeviceId,
+        _autoSyncDebounce = autoSyncDebounce {
+    _pixromptController.addListener(_handlePixromptChanged);
+  }
 
   final PixromptController _pixromptController;
   final SyncStateRepository _syncStateRepository;
@@ -31,18 +36,52 @@ class PixromptSyncController extends ChangeNotifier {
   final PixromptApi Function(String apiBaseUrl) _apiFactory;
   final DateTime Function() _now;
   final String Function() _deviceIdFactory;
+  final Duration _autoSyncDebounce;
 
   SyncStatus _status = const SyncStatus();
   SyncStatus get status => _status;
+  Future<void>? _syncInFlight;
+  Timer? _autoSyncTimer;
+  var _followUpSyncRequested = false;
+  var _suppressPixromptAutoSync = false;
+  var _sessionSerial = 0;
+  var _disposed = false;
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _sessionSerial += 1;
+    _followUpSyncRequested = false;
+    _autoSyncTimer?.cancel();
+    _pixromptController.removeListener(_handlePixromptChanged);
+    super.dispose();
+  }
 
   Future<void> refreshStatus() async {
     final state = await _syncStateRepository.read();
+    if (_isTokenExpired(state)) {
+      await _clearLocalSessionForRelogin(
+        state,
+        message: '登录已过期，请重新登录。',
+      );
+      return;
+    }
     _setStatus(
       _status.copyWith(
         accountEmail: state.accountEmail,
         lastSyncAt: state.lastSyncAt,
+        pendingDeletionCount: state.deletedTombstones.length,
       ),
     );
+  }
+
+  void scheduleSync({String reason = 'local-update'}) {
+    if (_disposed) return;
+    _autoSyncTimer?.cancel();
+    _autoSyncTimer = Timer(_autoSyncDebounce, () {
+      _autoSyncTimer = null;
+      unawaited(_runScheduledSync(reason));
+    });
   }
 
   Future<void> login({
@@ -60,6 +99,7 @@ class PixromptSyncController extends ChangeNotifier {
         message: '正在登录。',
         lastSyncAt: current.lastSyncAt,
         accountEmail: current.accountEmail,
+        pendingDeletionCount: current.deletedTombstones.length,
       ),
     );
     try {
@@ -79,19 +119,22 @@ class PixromptSyncController extends ChangeNotifier {
         deviceId: session.deviceId.isEmpty ? deviceId : session.deviceId,
       );
       await _syncStateRepository.write(state);
+      _sessionSerial += 1;
       _setStatus(
         SyncStatus(
           message: '已登录。',
           lastSyncAt: state.lastSyncAt,
           accountEmail: state.accountEmail,
+          pendingDeletionCount: state.deletedTombstones.length,
         ),
       );
     } catch (error) {
       _setStatus(
         SyncStatus(
-          message: '登录失败：$error',
+          message: '登录失败：${_displayError(error)}',
           lastSyncAt: current.lastSyncAt,
           accountEmail: current.accountEmail,
+          pendingDeletionCount: current.deletedTombstones.length,
         ),
       );
       rethrow;
@@ -101,30 +144,51 @@ class PixromptSyncController extends ChangeNotifier {
   Future<void> logout() async {
     final state = await _syncStateRepository.read();
     final token = state.token;
+    _sessionSerial += 1;
+    _followUpSyncRequested = false;
+    _autoSyncTimer?.cancel();
+    await _syncStateRepository.clearSession();
     _setStatus(
       SyncStatus(
-        isSyncing: true,
-        message: '正在退出登录。',
+        message: '已退出登录。',
         lastSyncAt: state.lastSyncAt,
-        accountEmail: state.accountEmail,
+        pendingDeletionCount: state.deletedTombstones.length,
       ),
     );
     try {
       if (token != null && token.isNotEmpty) {
-        await _apiFor(state.apiBaseUrl).logout(token);
+        unawaited(
+          _apiFor(state.apiBaseUrl).logout(token).catchError((_) {}),
+        );
       }
-    } finally {
-      await _syncStateRepository.clearSession();
-      _setStatus(
-        SyncStatus(
-          message: '已退出登录。',
-          lastSyncAt: state.lastSyncAt,
-        ),
-      );
+    } catch (_) {
+      // Remote logout is best-effort; local state is already cleared.
     }
   }
 
-  Future<void> manualSync() async {
+  Future<void> manualSync() {
+    final inFlight = _syncInFlight;
+    if (inFlight != null) {
+      _followUpSyncRequested = true;
+      return inFlight;
+    }
+    final run = _runCoalescedSync();
+    _syncInFlight = run;
+    return run.whenComplete(() {
+      if (identical(_syncInFlight, run)) {
+        _syncInFlight = null;
+      }
+    });
+  }
+
+  Future<void> _runCoalescedSync() async {
+    do {
+      _followUpSyncRequested = false;
+      await _runSingleSync();
+    } while (_followUpSyncRequested);
+  }
+
+  Future<void> _runSingleSync() async {
     var state = await _syncStateRepository.read();
     final token = state.token;
     if (token == null || token.isEmpty) {
@@ -133,7 +197,15 @@ class PixromptSyncController extends ChangeNotifier {
           message: '请先登录。',
           lastSyncAt: state.lastSyncAt,
           accountEmail: state.accountEmail,
+          pendingDeletionCount: state.deletedTombstones.length,
         ),
+      );
+      return;
+    }
+    if (_isTokenExpired(state)) {
+      await _clearLocalSessionForRelogin(
+        state,
+        message: '登录已过期，请重新登录。',
       );
       return;
     }
@@ -141,6 +213,7 @@ class PixromptSyncController extends ChangeNotifier {
       state = state.copyWith(deviceId: _deviceIdFactory());
       await _syncStateRepository.write(state);
     }
+    final syncSerial = _sessionSerial;
 
     _setStatus(
       SyncStatus(
@@ -148,6 +221,7 @@ class PixromptSyncController extends ChangeNotifier {
         message: '正在同步。',
         lastSyncAt: state.lastSyncAt,
         accountEmail: state.accountEmail,
+        pendingDeletionCount: state.deletedTombstones.length,
         progress: _newProgress('准备同步'),
       ),
     );
@@ -165,15 +239,23 @@ class PixromptSyncController extends ChangeNotifier {
         ),
         phase: '扫描本地图片',
       );
-      final local = await _prepareLocalImagesForPush(api, token, state);
+      final local = await _prepareLocalImagesForPush(
+        api,
+        token,
+        state,
+        syncSerial,
+      );
+      if (local == null) return;
       _completeQueueItem(
         'prepare',
         detail: '本地图片已扫描',
         phase: '本地扫描完成',
       );
+      if (!await _isCurrentSession(token, syncSerial)) return;
       if (local.imagesToPersist.isNotEmpty) {
-        await _pixromptController.applySyncUpserts(local.imagesToPersist);
+        await _applySyncUpsertsSilently(local.imagesToPersist);
       }
+      if (!await _isCurrentSession(token, syncSerial)) return;
 
       _upsertQueueItem(
         SyncQueueItem(
@@ -186,6 +268,7 @@ class PixromptSyncController extends ChangeNotifier {
         ),
         phase: '提交记录变更',
       );
+      if (!await _isCurrentSession(token, syncSerial)) return;
       final pushResponse = await api.push(
         token,
         PushRequest(
@@ -195,6 +278,7 @@ class PixromptSyncController extends ChangeNotifier {
           deleted: state.deletedTombstones.values.toList(),
         ),
       );
+      if (!await _isCurrentSession(token, syncSerial)) return;
       _completeQueueItem('push', detail: '记录变更已提交', phase: '记录已提交');
       state = await _persistPushResult(
         state,
@@ -203,7 +287,9 @@ class PixromptSyncController extends ChangeNotifier {
         api,
         token,
         local.blobUploadsBySha,
+        syncSerial,
       );
+      if (!await _isCurrentSession(token, syncSerial)) return;
 
       _upsertQueueItem(
         const SyncQueueItem(
@@ -215,6 +301,7 @@ class PixromptSyncController extends ChangeNotifier {
         ),
         phase: '拉取远端变更',
       );
+      if (!await _isCurrentSession(token, syncSerial)) return;
       final pullResponse = await api.pull(
         token,
         PullRequest(
@@ -223,27 +310,43 @@ class PixromptSyncController extends ChangeNotifier {
           knownBlobSha256: local.knownBlobSha256.toList(growable: false),
         ),
       );
+      if (!await _isCurrentSession(token, syncSerial)) return;
       _completeQueueItem(
         'pull',
         detail: '远端变更已拉取',
         phase: '远端变更已拉取',
       );
-      state = await _applyPullResult(api, token, state, pullResponse);
+      state = await _applyPullResult(
+        api,
+        token,
+        syncSerial,
+        state,
+        pullResponse,
+      );
+      if (!await _isCurrentSession(token, syncSerial)) return;
 
       _setStatus(
         SyncStatus(
           message: '同步完成。',
           lastSyncAt: state.lastSyncAt,
           accountEmail: state.accountEmail,
+          pendingDeletionCount: state.deletedTombstones.length,
           progress: _completeProgress(phase: '同步完成'),
         ),
       );
+    } on PixromptUnauthorizedException {
+      await _clearLocalSessionForRelogin(
+        state,
+        message: '登录状态已失效，请重新登录。',
+      );
     } catch (error) {
+      if (!await _isCurrentSession(token, syncSerial)) return;
       _setStatus(
         SyncStatus(
-          message: '同步失败：$error',
+          message: '同步失败：${_displayError(error)}',
           lastSyncAt: state.lastSyncAt,
           accountEmail: state.accountEmail,
+          pendingDeletionCount: state.deletedTombstones.length,
           progress: _completeProgress(phase: '同步失败', failed: true),
         ),
       );
@@ -263,6 +366,8 @@ class PixromptSyncController extends ChangeNotifier {
     await _syncStateRepository.write(
       state.copyWith(deletedTombstones: tombstones),
     );
+    _setStatus(_status.copyWith(pendingDeletionCount: tombstones.length));
+    scheduleSync(reason: 'local-tombstone');
   }
 
   Future<void> deleteImage(String imageUid) async {
@@ -288,6 +393,8 @@ class PixromptSyncController extends ChangeNotifier {
       ..remove(pending.image.uid);
     state = state.copyWith(deletedTombstones: tombstones);
     await _syncStateRepository.write(state);
+    _setStatus(_status.copyWith(pendingDeletionCount: tombstones.length));
+    scheduleSync(reason: 'undo-delete');
 
     if (state.knownServerVersions.containsKey(pending.image.uid)) {
       final restored = _pixromptController.state.allImages
@@ -331,12 +438,15 @@ class PixromptSyncController extends ChangeNotifier {
     await _syncStateRepository.write(
       state.copyWith(deletedTombstones: tombstones),
     );
+    _setStatus(_status.copyWith(pendingDeletionCount: tombstones.length));
+    scheduleSync(reason: 'delete');
   }
 
-  Future<_PreparedLocalImages> _prepareLocalImagesForPush(
+  Future<_PreparedLocalImages?> _prepareLocalImagesForPush(
     PixromptApi api,
     String token,
     PixromptSyncState state,
+    int syncSerial,
   ) async {
     final imagesToPersist = <PromptImageItem>[];
     final pushImages = <PushImage>[];
@@ -345,18 +455,29 @@ class PixromptSyncController extends ChangeNotifier {
     final blobUploadsBySha = <String, _BlobUpload>{};
 
     for (final image in await _pixromptController.readSyncImages()) {
+      if (!await _isCurrentSession(token, syncSerial)) return null;
+      final knownContentSha256 = _knownContentSha256(image);
+      if (_isCleanSyncedRecord(image: image, state: state)) {
+        knownBlobSha256.add(knownContentSha256!);
+        continue;
+      }
       final bytes = await _pixromptController.readSyncImageBytes(image.imageKey);
       BlobRef? blob;
       var record = image;
       var needsMaintenance = false;
       if (bytes != null) {
         final contentSha256 = sha256Hex(bytes);
-        final mimeType = image.mimeType ??
-            guessMimeType(image.originalFileName ?? image.imageKey);
+        final existingMimeType = image.mimeType?.trim();
+        final hasMimeType =
+            existingMimeType != null && existingMimeType.isNotEmpty;
+        final mimeType = hasMimeType
+            ? existingMimeType!
+            : guessMimeType(image.originalFileName ?? image.imageKey);
         knownBlobSha256.add(contentSha256);
-        needsMaintenance = image.contentSha256 != contentSha256 ||
-            image.mimeType == null ||
-            image.importedAt == null;
+        needsMaintenance = _knownContentSha256(image) != contentSha256 ||
+            !hasMimeType ||
+            image.importedAt == null ||
+            image.fileSizeBytes <= 0;
         blob = BlobRef(
           sha256: contentSha256,
           imageKey: image.imageKey,
@@ -384,36 +505,42 @@ class PixromptSyncController extends ChangeNotifier {
         if (needsMaintenance) {
           imagesToPersist.add(record);
         }
-        if (shouldPush && !await api.headBlob(token, contentSha256)) {
-          final queueId = 'upload:$contentSha256';
-          _upsertQueueItem(
-            SyncQueueItem(
-              id: queueId,
-              label: _imageProgressLabel(record),
-              detail: '上传原图',
-              kind: syncQueueKindUpload,
-              state: syncQueueStateActive,
+        if (shouldPush) {
+          if (!await _isCurrentSession(token, syncSerial)) return null;
+          final blobExists = await api.headBlob(token, contentSha256);
+          if (!await _isCurrentSession(token, syncSerial)) return null;
+          if (!blobExists) {
+            final queueId = 'upload:$contentSha256';
+            _upsertQueueItem(
+              SyncQueueItem(
+                id: queueId,
+                label: _imageProgressLabel(record),
+                detail: '上传原图',
+                kind: syncQueueKindUpload,
+                state: syncQueueStateActive,
+                bytesTotal: bytes.length,
+              ),
+              phase: '上传原图',
+            );
+            if (!await _isCurrentSession(token, syncSerial)) return null;
+            await api.putBlob(
+              token,
+              contentSha256,
+              bytes,
+              mimeType: mimeType,
+            );
+            if (!await _isCurrentSession(token, syncSerial)) return null;
+            _completeQueueItem(
+              queueId,
+              detail: '原图已上传',
+              bytesDone: bytes.length,
               bytesTotal: bytes.length,
-            ),
-            phase: '上传原图',
-          );
-          await api.putBlob(
-            token,
-            contentSha256,
-            bytes,
-            mimeType: mimeType,
-          );
-          _completeQueueItem(
-            queueId,
-            detail: '原图已上传',
-            bytesDone: bytes.length,
-            bytesTotal: bytes.length,
-            phase: '原图上传完成',
-          );
+              phase: '原图上传完成',
+            );
+          }
         }
-      } else if (image.contentSha256 != null &&
-          image.contentSha256!.isNotEmpty) {
-        knownBlobSha256.add(image.contentSha256!);
+      } else if (knownContentSha256 != null) {
+        knownBlobSha256.add(knownContentSha256);
       }
 
       final shouldPush = _shouldPushLocalRecord(
@@ -458,6 +585,29 @@ class PixromptSyncController extends ChangeNotifier {
         state.deletedTombstones.containsKey(record.uid);
   }
 
+  bool _isCleanSyncedRecord({
+    required PromptImageItem image,
+    required PixromptSyncState state,
+  }) {
+    return state.knownServerVersions.containsKey(image.uid) &&
+        image.lastSyncedAt != null &&
+        _hasMaintenanceMetadata(image) &&
+        !state.deletedTombstones.containsKey(image.uid);
+  }
+
+  bool _hasMaintenanceMetadata(PromptImageItem image) {
+    return _knownContentSha256(image) != null &&
+        (image.mimeType?.trim().isNotEmpty ?? false) &&
+        image.importedAt != null &&
+        image.fileSizeBytes > 0;
+  }
+
+  String? _knownContentSha256(PromptImageItem image) {
+    final value = image.contentSha256?.trim();
+    if (value == null || value.isEmpty) return null;
+    return value;
+  }
+
   Future<PixromptSyncState> _persistPushResult(
     PixromptSyncState state,
     PushResponse response,
@@ -465,13 +615,18 @@ class PixromptSyncController extends ChangeNotifier {
     PixromptApi api,
     String token,
     Map<String, _BlobUpload> blobUploadsBySha,
+    int syncSerial,
   ) async {
-    await _uploadMissingBlobs(
+    final uploadedMissing = await _uploadMissingBlobs(
       api,
       token,
       response.missingBlobs,
       blobUploadsBySha,
+      syncSerial,
     );
+    if (!uploadedMissing || !await _isCurrentSession(token, syncSerial)) {
+      return _syncStateRepository.read();
+    }
 
     final knownServerVersions =
         Map<String, int>.from(state.knownServerVersions);
@@ -496,19 +651,30 @@ class PixromptSyncController extends ChangeNotifier {
       deletedTombstones: deletedTombstones,
     );
     if (acceptedRecords.isNotEmpty) {
-      await _pixromptController.applySyncUpserts(acceptedRecords);
+      if (!await _isCurrentSession(token, syncSerial)) {
+        return _syncStateRepository.read();
+      }
+      await _applySyncUpsertsSilently(acceptedRecords);
+      if (!await _isCurrentSession(token, syncSerial)) {
+        return _syncStateRepository.read();
+      }
+    }
+    if (!await _isCurrentSession(token, syncSerial)) {
+      return _syncStateRepository.read();
     }
     await _syncStateRepository.write(next);
     return next;
   }
 
-  Future<void> _uploadMissingBlobs(
+  Future<bool> _uploadMissingBlobs(
     PixromptApi api,
     String token,
     List<String> missingBlobs,
     Map<String, _BlobUpload> blobUploadsBySha,
+    int syncSerial,
   ) async {
     for (final sha256 in missingBlobs.toSet()) {
+      if (!await _isCurrentSession(token, syncSerial)) return false;
       final upload = blobUploadsBySha[sha256];
       if (upload == null) {
         throw PixromptMalformedResponseException(
@@ -527,12 +693,14 @@ class PixromptSyncController extends ChangeNotifier {
         ),
         phase: '补传原图',
       );
+      if (!await _isCurrentSession(token, syncSerial)) return false;
       await api.putBlob(
         token,
         sha256,
         upload.bytes,
         mimeType: upload.mimeType,
       );
+      if (!await _isCurrentSession(token, syncSerial)) return false;
       _completeQueueItem(
         queueId,
         detail: '缺失原图已补传',
@@ -541,11 +709,13 @@ class PixromptSyncController extends ChangeNotifier {
         phase: '原图补传完成',
       );
     }
+    return true;
   }
 
   Future<PixromptSyncState> _applyPullResult(
     PixromptApi api,
     String token,
+    int syncSerial,
     PixromptSyncState state,
     PullResponse response,
   ) async {
@@ -557,6 +727,9 @@ class PixromptSyncController extends ChangeNotifier {
         : _now().millisecondsSinceEpoch;
 
     for (final change in response.changes) {
+      if (!await _isCurrentSession(token, syncSerial)) {
+        return _syncStateRepository.read();
+      }
       if (change.type != 'upsert') continue;
       final knownVersion = knownServerVersions[change.imageUid];
       if (knownVersion != null && change.serverVersion < knownVersion) {
@@ -576,6 +749,9 @@ class PixromptSyncController extends ChangeNotifier {
         final existingSha =
             existingBytes == null ? null : sha256Hex(existingBytes);
         if (existingSha != blob.sha256) {
+          if (!await _isCurrentSession(token, syncSerial)) {
+            return _syncStateRepository.read();
+          }
           final queueId = 'download:${blob.sha256}';
           _upsertQueueItem(
             SyncQueueItem(
@@ -588,16 +764,28 @@ class PixromptSyncController extends ChangeNotifier {
             ),
             phase: '下载远端原图',
           );
+          if (!await _isCurrentSession(token, syncSerial)) {
+            return _syncStateRepository.read();
+          }
           final downloaded = await api.getBlob(token, blob.sha256);
+          if (!await _isCurrentSession(token, syncSerial)) {
+            return _syncStateRepository.read();
+          }
           if (sha256Hex(downloaded) != blob.sha256) {
             throw PixromptMalformedResponseException(
               'Pixrompt API returned a blob with a mismatched SHA-256.',
             );
           }
+          if (!await _isCurrentSession(token, syncSerial)) {
+            return _syncStateRepository.read();
+          }
           await _pixromptController.writeSyncImageBytes(
             image.imageKey,
             downloaded,
           );
+          if (!await _isCurrentSession(token, syncSerial)) {
+            return _syncStateRepository.read();
+          }
           _completeQueueItem(
             queueId,
             detail: '远端原图已下载',
@@ -624,7 +812,13 @@ class PixromptSyncController extends ChangeNotifier {
     }
 
     if (upserts.isNotEmpty) {
-      await _pixromptController.applySyncUpserts(upserts);
+      if (!await _isCurrentSession(token, syncSerial)) {
+        return _syncStateRepository.read();
+      }
+      await _applySyncUpsertsSilently(upserts);
+      if (!await _isCurrentSession(token, syncSerial)) {
+        return _syncStateRepository.read();
+      }
     }
 
     if (response.deleted.isNotEmpty) {
@@ -641,9 +835,15 @@ class PixromptSyncController extends ChangeNotifier {
         }
         freshDeleted.add(tombstone);
       }
-      await _pixromptController.applySyncTombstones(
+      if (!await _isCurrentSession(token, syncSerial)) {
+        return _syncStateRepository.read();
+      }
+      await _applySyncTombstonesSilently(
         freshDeleted.map((tombstone) => tombstone.imageUid),
       );
+      if (!await _isCurrentSession(token, syncSerial)) {
+        return _syncStateRepository.read();
+      }
       for (final tombstone in freshDeleted) {
         deletedTombstones.remove(tombstone.imageUid);
         final serverVersion = tombstone.serverVersion;
@@ -659,8 +859,122 @@ class PixromptSyncController extends ChangeNotifier {
       knownServerVersions: knownServerVersions,
       lastSyncAt: syncTime,
     );
+    if (!await _isCurrentSession(token, syncSerial)) {
+      return _syncStateRepository.read();
+    }
     await _syncStateRepository.write(next);
     return next;
+  }
+
+  void _handlePixromptChanged() {
+    if (_suppressPixromptAutoSync || _disposed) return;
+    scheduleSync(reason: 'pixrompt-change');
+  }
+
+  Future<void> _runScheduledSync(String _) async {
+    try {
+      if (!await _hasDirtyLocalWork()) return;
+      await manualSync();
+    } catch (_) {
+      // Manual status already carries the failure; background sync stays quiet.
+    }
+  }
+
+  Future<bool> _hasDirtyLocalWork() async {
+    final state = await _syncStateRepository.read();
+    final token = state.token;
+    if (token == null || token.isEmpty) return false;
+    if (_isTokenExpired(state)) {
+      await _clearLocalSessionForRelogin(
+        state,
+        message: '登录已过期，请重新登录。',
+      );
+      return false;
+    }
+    if (state.deletedTombstones.isNotEmpty) return true;
+    for (final image in await _pixromptController.readSyncImages()) {
+      if (!state.knownServerVersions.containsKey(image.uid) ||
+          image.lastSyncedAt == null ||
+          !_hasMaintenanceMetadata(image)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool _isTokenExpired(PixromptSyncState state) {
+    final expiresAt = state.tokenExpiresAt;
+    if (expiresAt == null) return false;
+    return expiresAt <= _nowMs();
+  }
+
+  Future<void> _clearLocalSessionForRelogin(
+    PixromptSyncState state, {
+    required String message,
+  }) async {
+    _sessionSerial += 1;
+    _autoSyncTimer?.cancel();
+    await _syncStateRepository.clearSession();
+    _setStatus(
+      SyncStatus(
+        message: message,
+        lastSyncAt: state.lastSyncAt,
+        pendingDeletionCount: state.deletedTombstones.length,
+        progress: _completeProgress(phase: '需要重新登录', failed: true),
+      ),
+    );
+  }
+
+  Future<bool> _isCurrentSession(String token, int serial) async {
+    if (_sessionSerial != serial) return false;
+    return _hasCurrentToken(token);
+  }
+
+  Future<bool> _hasCurrentToken(String token) async {
+    final current = await _syncStateRepository.read();
+    return current.token == token;
+  }
+
+  Future<void> _applySyncUpsertsSilently(
+    Iterable<PromptImageItem> upserts,
+  ) async {
+    final previous = _suppressPixromptAutoSync;
+    _suppressPixromptAutoSync = true;
+    try {
+      await _pixromptController.applySyncUpserts(upserts);
+    } finally {
+      _suppressPixromptAutoSync = previous;
+    }
+  }
+
+  Future<void> _applySyncTombstonesSilently(
+    Iterable<String> imageUids,
+  ) async {
+    final previous = _suppressPixromptAutoSync;
+    _suppressPixromptAutoSync = true;
+    try {
+      await _pixromptController.applySyncTombstones(imageUids);
+    } finally {
+      _suppressPixromptAutoSync = previous;
+    }
+  }
+
+  String _displayError(Object error) {
+    if (error is PixromptUnauthorizedException) {
+      return '登录状态已失效，请重新登录。';
+    }
+    if (error is PixromptNetworkException) {
+      return '网络请求失败，请稍后重试。';
+    }
+    if (error is PixromptHttpException) {
+      final statusCode = error.statusCode;
+      if (statusCode != null) return '服务器返回 HTTP $statusCode。';
+      return '服务器返回错误。';
+    }
+    if (error is PixromptMalformedResponseException) {
+      return 'API 地址或响应格式异常。';
+    }
+    return '发生未知错误，请稍后重试。';
   }
 
   PixromptApi _apiFor(String apiBaseUrl) {
@@ -781,6 +1095,7 @@ class PixromptSyncController extends ChangeNotifier {
   }
 
   void _setStatus(SyncStatus status) {
+    if (_disposed) return;
     _status = status;
     notifyListeners();
   }

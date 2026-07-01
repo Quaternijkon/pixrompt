@@ -5,7 +5,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import FileResponse
 
 from server.app import db
-from server.app.auth import get_current_session, router as auth_router
+from server.app.auth import AuthSession, get_current_session, router as auth_router
 from server.app.blob_store import (
     BlobHashMismatch,
     BlobNotFound,
@@ -14,7 +14,7 @@ from server.app.blob_store import (
     InvalidBlobHash,
 )
 from server.app.config import Settings, load_settings
-from server.app.sync import router as sync_router
+from server.app.sync import emit_blob_available_events, router as sync_router
 from server.app.security import now_ms
 
 
@@ -99,11 +99,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             headers=_blob_headers(sha256, int(row["size_bytes"])),
         )
 
-    @app.put(
-        f"{settings.base_path}/blobs/{{sha256}}",
-        dependencies=[Depends(get_current_session)],
-    )
-    async def put_blob(request: Request, sha256: str) -> Response:
+    @app.put(f"{settings.base_path}/blobs/{{sha256}}")
+    async def put_blob(
+        request: Request,
+        sha256: str,
+        session: AuthSession = Depends(get_current_session),
+    ) -> Response:
         mime_type = request.headers.get("content-type") or "application/octet-stream"
         mime_type = mime_type.split(";", 1)[0].strip() or "application/octet-stream"
 
@@ -131,6 +132,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         with request.app.state.db_lock:
             try:
+                existing_blob = request.app.state.db.execute(
+                    "SELECT 1 FROM blobs WHERE sha256 = ?",
+                    (sha256,),
+                ).fetchone()
                 request.app.state.db.execute(
                     """
                     INSERT OR IGNORE INTO blobs (
@@ -143,6 +148,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "SELECT size_bytes, mime_type FROM blobs WHERE sha256 = ?",
                     (sha256,),
                 ).fetchone()
+                if stored.created or existing_blob is None:
+                    emit_blob_available_events(
+                        request.app.state.db,
+                        user_id=session.user_id,
+                        sha256=sha256,
+                    )
                 request.app.state.db.commit()
             except Exception:
                 request.app.state.db.rollback()

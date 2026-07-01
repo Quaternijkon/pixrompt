@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -25,11 +26,14 @@ class PixromptApiClient implements PixromptApi {
   PixromptApiClient({
     required String apiBaseUrl,
     http.Client? httpClient,
+    Duration requestTimeout = const Duration(seconds: 25),
   })  : apiBaseUrl = _normalizeBaseUrl(apiBaseUrl),
-        _httpClient = httpClient ?? http.Client();
+        _httpClient = httpClient ?? http.Client(),
+        _requestTimeout = requestTimeout;
 
   final Uri apiBaseUrl;
   final http.Client _httpClient;
+  final Duration _requestTimeout;
 
   @override
   Future<AuthSession> login(LoginRequest request) async {
@@ -183,9 +187,11 @@ class PixromptApiClient implements PixromptApi {
     Future<http.Response> Function() request,
   ) async {
     try {
-      return await request();
+      return await request().timeout(_requestTimeout);
     } on PixromptApiException {
       rethrow;
+    } on TimeoutException catch (error) {
+      throw PixromptNetworkException('Network request timed out.', error);
     } on http.ClientException catch (error) {
       throw PixromptNetworkException('Network request failed.', error);
     } catch (error) {
@@ -286,8 +292,7 @@ class PixromptApiException implements Exception {
   @override
   String toString() {
     final status = statusCode == null ? '' : ' HTTP $statusCode.';
-    final detail = body == null || body!.isEmpty ? '' : ' $body';
-    return '$runtimeType: $message$status$detail';
+    return '$runtimeType: $message$status';
   }
 }
 

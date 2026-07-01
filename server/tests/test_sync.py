@@ -1,4 +1,4 @@
-from conftest import upload_blob
+from conftest import sha256_hex, upload_blob
 
 
 def image_payload(
@@ -181,6 +181,125 @@ def test_pull_reports_missing_blobs_unknown_to_client(client, auth_headers):
 
     assert pull_response.status_code == 200
     assert pull_response.json()["missingBlobs"] == [digest]
+
+
+def test_pull_omits_blob_ref_when_server_blob_row_is_missing(client, auth_headers):
+    missing_digest = "b" * 64
+    push_response = push_image(
+        client,
+        auth_headers,
+        image_payload(
+            "image-1",
+            updated_at=1_000,
+            title="Metadata before blob upload",
+            sha256=missing_digest,
+        ),
+    )
+
+    pull_response = client.post(
+        "/v1/sync/pull",
+        headers=auth_headers,
+        json={"deviceId": "phone-2", "cursor": 0, "knownBlobSha256": []},
+    )
+
+    assert push_response["missingBlobs"] == [missing_digest]
+    assert pull_response.status_code == 200
+    body = pull_response.json()
+    assert body["missingBlobs"] == []
+    assert len(body["changes"]) == 1
+    assert body["changes"][0]["record"]["title"] == "Metadata before blob upload"
+    assert body["changes"][0]["blob"] is None
+
+
+def test_push_reports_missing_blob_when_blob_file_is_missing(
+    client,
+    auth_headers,
+    configured_env,
+):
+    data = b"pixrompt blob missing from filesystem"
+    digest = upload_blob(client, auth_headers, data)
+    blob_path = configured_env["blob_dir"] / digest[:2] / digest[2:4] / digest
+    blob_path.unlink()
+
+    push_response = push_image(
+        client,
+        auth_headers,
+        image_payload(
+            "image-1",
+            updated_at=1_000,
+            title="File missing after db row",
+            sha256=digest,
+        ),
+    )
+    pull_response = client.post(
+        "/v1/sync/pull",
+        headers=auth_headers,
+        json={"deviceId": "phone-2", "cursor": 0, "knownBlobSha256": []},
+    )
+
+    assert push_response["missingBlobs"] == [digest]
+    assert pull_response.status_code == 200
+    body = pull_response.json()
+    assert body["missingBlobs"] == []
+    assert len(body["changes"]) == 1
+    assert body["changes"][0]["blob"] is None
+
+
+def test_blob_upload_reemits_upsert_after_missing_blob_pull(client, auth_headers):
+    data = b"delayed pixrompt blob"
+    digest = sha256_hex(data)
+    push_response = push_image(
+        client,
+        auth_headers,
+        image_payload(
+            "image-1",
+            updated_at=1_000,
+            title="Metadata before blob upload",
+            sha256=digest,
+        ),
+    )
+    first_pull_response = client.post(
+        "/v1/sync/pull",
+        headers=auth_headers,
+        json={"deviceId": "phone-2", "cursor": 0, "knownBlobSha256": []},
+    )
+
+    assert push_response["missingBlobs"] == [digest]
+    assert first_pull_response.status_code == 200
+    first_pull = first_pull_response.json()
+    assert first_pull["changes"][0]["blob"] is None
+    cursor_after_missing_blob_pull = first_pull["cursor"]
+
+    put_response = client.put(
+        f"/v1/blobs/{digest}",
+        content=data,
+        headers={**auth_headers, "content-type": "image/png"},
+    )
+    repair_pull_response = client.post(
+        "/v1/sync/pull",
+        headers=auth_headers,
+        json={
+            "deviceId": "phone-2",
+            "cursor": cursor_after_missing_blob_pull,
+            "knownBlobSha256": [],
+        },
+    )
+
+    assert put_response.status_code == 201
+    assert repair_pull_response.status_code == 200
+    repair_pull = repair_pull_response.json()
+    assert repair_pull["cursor"] > cursor_after_missing_blob_pull
+    assert repair_pull["missingBlobs"] == [digest]
+    assert repair_pull["deleted"] == []
+    assert len(repair_pull["changes"]) == 1
+    assert repair_pull["changes"][0]["imageUid"] == "image-1"
+    assert repair_pull["changes"][0]["serverVersion"] == 1
+    assert repair_pull["changes"][0]["record"]["title"] == "Metadata before blob upload"
+    assert repair_pull["changes"][0]["blob"] == {
+        "sha256": digest,
+        "imageKey": "image-1.png",
+        "sizeBytes": len(data),
+    }
 
 
 def test_tombstone_propagates_to_incremental_pull(client, auth_headers):

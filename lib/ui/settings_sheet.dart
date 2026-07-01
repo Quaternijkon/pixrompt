@@ -49,7 +49,7 @@ class SettingsSheet extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: PixromptSpace.xl),
-              Text('Account', style: Theme.of(context).textTheme.titleMedium),
+              Text('账号', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: PixromptSpace.sm),
               SizedBox(
                 width: double.infinity,
@@ -63,7 +63,7 @@ class SettingsSheet extends StatelessWidget {
                     syncController: syncController,
                   ),
                   icon: const Icon(Icons.cloud_sync_outlined),
-                  label: const Text('Account and Sync'),
+                  label: const Text('账号与同步'),
                 ),
               ),
               const SizedBox(height: PixromptSpace.sm),
@@ -82,7 +82,7 @@ class SettingsSheet extends StatelessWidget {
                     );
                   },
                   icon: const Icon(Icons.cloud_done_outlined),
-                  label: const Text('Sync Center'),
+                  label: const Text('同步中心'),
                 ),
               ),
               const SizedBox(height: PixromptSpace.xl),

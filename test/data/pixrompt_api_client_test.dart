@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -238,5 +239,37 @@ void main() {
       () => api.session('existing-token'),
       throwsA(isA<PixromptMalformedResponseException>()),
     );
+  });
+
+  test('maps request timeouts to network exceptions', () async {
+    final pending = Completer<http.Response>();
+    final api = PixromptApiClient(
+      apiBaseUrl: 'https://pixrompt.quaternijkon.online/v1',
+      requestTimeout: const Duration(milliseconds: 1),
+      httpClient: MockClient((request) => pending.future),
+    );
+
+    await expectLater(
+      api.session('token-1'),
+      throwsA(isA<PixromptNetworkException>()),
+    );
+  });
+
+  test('exception text does not include raw response bodies', () async {
+    final api = PixromptApiClient(
+      apiBaseUrl: 'https://pixrompt.quaternijkon.online/v1',
+      httpClient: MockClient((request) async {
+        return http.Response('{"debug":"raw-secret-body"}', 500);
+      }),
+    );
+
+    try {
+      await api.session('token-1');
+      fail('Expected PixromptHttpException.');
+    } catch (error) {
+      expect(error, isA<PixromptHttpException>());
+      expect(error.toString(), contains('HTTP 500'));
+      expect(error.toString(), isNot(contains('raw-secret-body')));
+    }
   });
 }

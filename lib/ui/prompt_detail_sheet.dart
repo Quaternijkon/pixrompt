@@ -245,10 +245,17 @@ class _PromptDetailSheetState extends State<PromptDetailSheet> {
           key: ValueKey('detail.imageSurface.${image.uid}'),
           width: viewportSize.width,
           height: imageHeight,
-          child: StoredImage(
-            loader: widget.controller.imageBytes(image.imageKey),
-            fit: BoxFit.contain,
-            backgroundColor: Colors.black,
+          child: Semantics(
+            key: ValueKey('detail.imageSemantics.${image.uid}'),
+            label: _detailImageSemanticLabel(image),
+            image: true,
+            child: ExcludeSemantics(
+              child: StoredImage(
+                loader: widget.controller.imageBytes(image.imageKey),
+                fit: BoxFit.contain,
+                backgroundColor: Colors.black,
+              ),
+            ),
           ),
         ),
       ),
@@ -504,58 +511,87 @@ class _DetailBottomOverlay extends StatelessWidget {
                     ),
                   ),
                 ),
-                Row(
+                SizedBox(
                   key: const ValueKey('detail.controlsRow'),
-                  children: [
-                    IconButton(
-                      key: const ValueKey('detail.filterSamePrompt'),
-                      tooltip: '筛选同 Prompt',
-                      color: Colors.white,
-                      style: _detailActionStyle(),
-                      onPressed: onFilterSamePrompt,
-                      icon: const Icon(Icons.filter_alt_outlined),
-                    ),
-                    IconButton(
-                      tooltip: '复制 Prompt',
-                      color: Colors.white,
-                      style: _detailActionStyle(),
-                      onPressed: onCopy,
-                      icon: const Icon(Icons.copy),
-                    ),
-                    IconButton(
-                      tooltip: '追加编辑',
-                      color: Colors.white,
-                      style: _detailActionStyle(),
-                      onPressed: onAppendEdit,
-                      icon: const Icon(Icons.add_photo_alternate_outlined),
-                    ),
-                    if (showEditHistoryAction)
-                      IconButton(
-                        key: const ValueKey('detail.relatedAction'),
-                        tooltip: '编辑历史',
-                        color: Colors.white,
-                        style: _detailActionStyle(),
-                        onPressed: onRelated,
-                        icon: const Icon(Icons.history_outlined),
-                      ),
-                    const Spacer(),
-                    IconButton(
-                      key: const ValueKey('detail.detailsAction'),
-                      tooltip: '查看详情',
-                      color: Colors.white,
-                      style: _detailActionStyle(),
-                      onPressed: onDetails,
-                      icon: const Icon(Icons.info_outline),
-                    ),
-                    IconButton(
-                      key: const ValueKey('detail.deleteAction'),
-                      tooltip: '删除',
-                      color: Colors.white,
-                      style: _detailActionStyle(destructive: true),
-                      onPressed: onDelete,
-                      icon: const Icon(Icons.delete_outline),
-                    ),
-                  ],
+                  width: double.infinity,
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final leading = [
+                        IconButton(
+                          key: const ValueKey('detail.filterSamePrompt'),
+                          tooltip: '筛选同 Prompt',
+                          color: Colors.white,
+                          style: _detailActionStyle(),
+                          onPressed: onFilterSamePrompt,
+                          icon: const Icon(Icons.filter_alt_outlined),
+                        ),
+                        IconButton(
+                          tooltip: '复制 Prompt',
+                          color: Colors.white,
+                          style: _detailActionStyle(),
+                          onPressed: onCopy,
+                          icon: const Icon(Icons.copy),
+                        ),
+                        IconButton(
+                          tooltip: '追加编辑',
+                          color: Colors.white,
+                          style: _detailActionStyle(),
+                          onPressed: onAppendEdit,
+                          icon: const Icon(
+                            Icons.add_photo_alternate_outlined,
+                          ),
+                        ),
+                        if (showEditHistoryAction)
+                          IconButton(
+                            key: const ValueKey('detail.relatedAction'),
+                            tooltip: '编辑历史',
+                            color: Colors.white,
+                            style: _detailActionStyle(),
+                            onPressed: onRelated,
+                            icon: const Icon(Icons.history_outlined),
+                          ),
+                      ];
+                      final trailing = [
+                        IconButton(
+                          key: const ValueKey('detail.detailsAction'),
+                          tooltip: '查看详情',
+                          color: Colors.white,
+                          style: _detailActionStyle(),
+                          onPressed: onDetails,
+                          icon: const Icon(Icons.info_outline),
+                        ),
+                        IconButton(
+                          key: const ValueKey('detail.deleteAction'),
+                          tooltip: '删除',
+                          color: Colors.white,
+                          style: _detailActionStyle(destructive: true),
+                          onPressed: onDelete,
+                          icon: const Icon(Icons.delete_outline),
+                        ),
+                      ];
+
+                      if (constraints.maxWidth >=
+                          _detailControlsWideWidth(showEditHistoryAction)) {
+                        return Row(
+                          children: [
+                            ..._withControlGaps(leading),
+                            const Spacer(),
+                            ..._withControlGaps(trailing),
+                          ],
+                        );
+                      }
+                      return SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: _withControlGaps([
+                            ...leading,
+                            ...trailing,
+                          ]),
+                        ),
+                      );
+                    },
+                  ),
                 ),
                 AnimatedSize(
                   duration: const Duration(milliseconds: 180),
@@ -601,6 +637,31 @@ class _DetailBottomOverlay extends StatelessWidget {
 
 ButtonStyle _detailActionStyle({bool destructive = false}) {
   return pixromptIconButtonStyle(destructive: destructive);
+}
+
+double _detailControlsWideWidth(bool showEditHistoryAction) {
+  final buttonCount = showEditHistoryAction ? 6 : 5;
+  final intraGroupGapCount = showEditHistoryAction ? 4 : 3;
+  return buttonCount * 48 + intraGroupGapCount * 8;
+}
+
+String _detailImageSemanticLabel(PromptImageItem image) {
+  final prompt = image.prompt.trim();
+  final fileName = image.originalFileName?.trim();
+  return [
+    '图片',
+    if (prompt.isNotEmpty) 'Prompt：$prompt',
+    if (fileName != null && fileName.isNotEmpty) '文件：$fileName',
+  ].join('，');
+}
+
+List<Widget> _withControlGaps(List<Widget> controls) {
+  return [
+    for (var index = 0; index < controls.length; index++) ...[
+      if (index > 0) const SizedBox(width: 8),
+      controls[index],
+    ],
+  ];
 }
 
 class ImageMetadataPage extends StatelessWidget {
@@ -851,7 +912,7 @@ class _ImageEditHistoryPageState extends State<ImageEditHistoryPage> {
                 for (final edge in layout.edges)
                   Positioned(
                     left: edge.labelCenter.dx - 72,
-                    top: edge.labelCenter.dy - 18,
+                    top: edge.labelCenter.dy - 22,
                     child: _PromptEdgeChip(
                       edge: edge.edge,
                       onTap: () => _showPromptEdge(context, edge.edge.prompt),
@@ -956,56 +1017,76 @@ class _EditTreeNodeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final content = GestureDetector(
+    final content = Semantics(
       key: ValueKey('history.node.${image.uid}'),
-      behavior: HitTestBehavior.opaque,
+      label: _historyNodeSemanticLabel(image),
+      button: true,
+      selected: highlighted ? true : null,
       onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOutCubic,
-        padding: const EdgeInsets.all(7),
-        decoration: BoxDecoration(
-          color: highlighted
-              ? Theme.of(context).colorScheme.primary.withOpacity(0.18)
-              : _mediaSurface,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(
+      child: ExcludeSemantics(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          decoration: BoxDecoration(
             color: highlighted
-                ? Theme.of(context).colorScheme.primary
-                : _mediaBorder,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.26),
-              blurRadius: 18,
-              offset: const Offset(0, 10),
+                ? Theme.of(context).colorScheme.primary.withOpacity(0.18)
+                : _mediaSurface,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: highlighted
+                  ? Theme.of(context).colorScheme.primary
+                  : _mediaBorder,
             ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: StoredImage(
-                  loader: controller.imageBytes(image.imageKey),
-                  fit: BoxFit.cover,
-                  backgroundColor: _mediaSurfaceHigh,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.26),
+                blurRadius: 18,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: Material(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(18),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              excludeFromSemantics: true,
+              borderRadius: BorderRadius.circular(18),
+              splashColor: Colors.white.withOpacity(0.16),
+              highlightColor: Colors.white.withOpacity(0.10),
+              focusColor: Colors.white.withOpacity(0.12),
+              hoverColor: Colors.white.withOpacity(0.08),
+              onTap: onTap,
+              child: Padding(
+                padding: const EdgeInsets.all(7),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: StoredImage(
+                          loader: controller.imageBytes(image.imageKey),
+                          fit: BoxFit.cover,
+                          backgroundColor: _mediaSurfaceHigh,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      image.prompt,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                            color: Colors.white.withOpacity(0.76),
+                            height: 1.2,
+                          ),
+                    ),
+                  ],
                 ),
               ),
             ),
-            const SizedBox(height: 6),
-            Text(
-              image.prompt,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: Colors.white.withOpacity(0.76),
-                    height: 1.2,
-                  ),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -1015,6 +1096,16 @@ class _EditTreeNodeCard extends StatelessWidget {
       child: content,
     );
   }
+}
+
+String _historyNodeSemanticLabel(PromptImageItem image) {
+  final prompt = image.prompt.trim();
+  final fileName = image.originalFileName?.trim();
+  return [
+    '打开历史图片',
+    if (prompt.isNotEmpty) 'Prompt：$prompt',
+    if (fileName != null && fileName.isNotEmpty) '文件：$fileName',
+  ].join('，');
 }
 
 class _PromptEdgeChip extends StatelessWidget {
@@ -1028,17 +1119,15 @@ class _PromptEdgeChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
+    return Semantics(
       key: ValueKey('history.edge.${edge.parentImageUid}.${edge.prompt}'),
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(999),
-        onTap: onTap,
+      label: '查看编辑 Prompt：${edge.prompt}',
+      button: true,
+      onTap: onTap,
+      child: ExcludeSemantics(
         child: DecoratedBox(
           decoration: BoxDecoration(
-            color: PixromptPalette.darkSurfaceHigh.withOpacity(0.92),
             borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: Theme.of(context).colorScheme.primary),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withOpacity(0.28),
@@ -1047,23 +1136,44 @@ class _PromptEdgeChip extends StatelessWidget {
               ),
             ],
           ),
-          child: SizedBox(
-            width: 144,
-            height: 36,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.call_split, size: 16),
-                const SizedBox(width: 5),
-                Flexible(
-                  child: Text(
-                    edge.prompt,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.labelMedium,
+          child: Material(
+            color: PixromptPalette.darkSurfaceHigh.withOpacity(0.92),
+            borderRadius: BorderRadius.circular(999),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              excludeFromSemantics: true,
+              borderRadius: BorderRadius.circular(999),
+              splashColor: Colors.white.withOpacity(0.16),
+              highlightColor: Colors.white.withOpacity(0.10),
+              focusColor: Colors.white.withOpacity(0.12),
+              hoverColor: Colors.white.withOpacity(0.08),
+              onTap: onTap,
+              child: Container(
+                width: 144,
+                constraints: const BoxConstraints(minHeight: 44),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: Theme.of(context).colorScheme.primary,
                   ),
                 ),
-              ],
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.call_split, size: 16),
+                    const SizedBox(width: 5),
+                    Flexible(
+                      child: Text(
+                        edge.prompt,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.labelMedium,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
         ),
