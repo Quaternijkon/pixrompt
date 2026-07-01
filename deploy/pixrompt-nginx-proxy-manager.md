@@ -1,9 +1,10 @@
-# Pixrompt Sync API Deployment
+# Pixrompt Web And Sync API Deployment
 
-This guide deploys the single-user Pixrompt sync backend on this host and exposes
-it at:
+This guide deploys the single-user Pixrompt backend on this host and exposes the
+Flutter web app plus the sync API at:
 
 ```text
+https://pixrompt.quaternijkon.online/
 https://pixrompt.quaternijkon.online/v1
 ```
 
@@ -20,6 +21,7 @@ Recommended paths:
 /etc/pixrompt/env                      production environment file
 /var/lib/pixrompt/pixrompt.sqlite3     SQLite metadata
 /var/lib/pixrompt/blobs                original image blobs
+/var/www/pixrompt-web                  uploaded Flutter web build
 /etc/systemd/system/pixrompt-api.service
 ```
 
@@ -51,6 +53,7 @@ server/.venv/bin/pip install -r server/requirements.txt
 ```bash
 install -d -m 700 /etc/pixrompt
 install -d -m 700 /var/lib/pixrompt/blobs
+install -d -m 755 /var/www/pixrompt-web
 ```
 
 ## Create `/etc/pixrompt/env`
@@ -82,6 +85,7 @@ PIXROMPT_BLOB_DIR=/var/lib/pixrompt/blobs
 PIXROMPT_TOKEN_TTL_SECONDS=2592000
 PIXROMPT_BASE_PATH=/v1
 PIXROMPT_MAX_BLOB_BYTES=52428800
+PIXROMPT_WEB_DIR=/var/www/pixrompt-web
 ```
 
 Use the real single-user email and generated password hash only in this file.
@@ -131,6 +135,7 @@ docker exec nginx-proxy-manager nginx -t
 Public health checks:
 
 ```bash
+curl -fsS https://pixrompt.quaternijkon.online/ | grep -i Pixrompt
 curl -fsS https://pixrompt.quaternijkon.online/health
 curl -fsS https://pixrompt.quaternijkon.online/v1/health
 curl -i https://pixrompt.quaternijkon.online/v1/sync/pull
@@ -168,11 +173,13 @@ Keep `/root/管理员手册.md` aligned with the live service after deployment:
 
 ```text
 Service: Pixrompt Sync API
+Public web app: https://pixrompt.quaternijkon.online/
 Public API base: https://pixrompt.quaternijkon.online/v1
 Original backend port: 18182
 Runtime path: /root/pixrompt
 Service unit: pixrompt-api.service
 Environment: /etc/pixrompt/env
+Web build: /var/www/pixrompt-web
 Data: /var/lib/pixrompt/pixrompt.sqlite3 and /var/lib/pixrompt/blobs
 Account: single-user email in /etc/pixrompt/env, password hash only
 ```
@@ -180,11 +187,20 @@ Account: single-user email in /etc/pixrompt/env, password hash only
 ## Flutter Build Workflow
 
 Do not build Flutter artifacts on this host for this deployment. Push the
-repository changes, then build on a machine with Flutter and Android tooling:
+repository changes, then build on a machine with Flutter tooling:
 
 ```bash
 flutter pub get
 flutter analyze
 flutter test
 flutter build apk --release
+flutter build web --release
+```
+
+Upload the contents of `build/web/` to `/var/www/pixrompt-web/`, then restart
+the backend:
+
+```bash
+rsync -a --delete build/web/ root@23.80.82.95:/var/www/pixrompt-web/
+ssh root@23.80.82.95 'systemctl restart pixrompt-api.service'
 ```
