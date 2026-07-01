@@ -32,6 +32,7 @@ class Settings:
     token_ttl_seconds: int = 2_592_000
     base_path: str = "/v1"
     max_blob_bytes: int = 52_428_800
+    web_dir: Path | None = None
 
 
 def _normalize_base_path(value: str) -> str:
@@ -95,5 +96,10 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
         max_blob_bytes=_parse_positive_int(
             env.get("PIXROMPT_MAX_BLOB_BYTES", "52428800"),
             "PIXROMPT_MAX_BLOB_BYTES",
+        ),
+        web_dir=(
+            Path(web_dir)
+            if (web_dir := env.get("PIXROMPT_WEB_DIR", "").strip())
+            else None
         ),
     )

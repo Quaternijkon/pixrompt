@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 from threading import RLock
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
@@ -20,6 +21,24 @@ from server.app.security import now_ms
 
 def _health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+def _web_response(web_dir: Path, asset_path: str) -> FileResponse:
+    normalized = asset_path.strip("/")
+    requested = (
+        (web_dir / normalized) if normalized else (web_dir / "index.html")
+    ).resolve()
+    root = web_dir.resolve()
+
+    if root not in requested.parents and requested != root:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    if requested.is_file():
+        return FileResponse(requested)
+
+    index_path = root / "index.html"
+    if index_path.is_file():
+        return FileResponse(index_path)
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Web app not found")
 
 
 def _blob_headers(
@@ -167,6 +186,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             headers=_blob_headers(sha256, response_size),
             media_type=response_mime_type,
         )
+
+    if settings.web_dir is not None:
+        api_path = settings.base_path.strip("/")
+
+        @app.get("/", include_in_schema=False)
+        def get_web_index() -> FileResponse:
+            return _web_response(settings.web_dir, "")
+
+        @app.get("/{asset_path:path}", include_in_schema=False)
+        def get_web_asset(asset_path: str) -> FileResponse:
+            normalized = asset_path.strip("/")
+            if api_path and (
+                normalized == api_path or normalized.startswith(f"{api_path}/")
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Not found",
+                )
+            return _web_response(settings.web_dir, normalized)
 
     return app
 

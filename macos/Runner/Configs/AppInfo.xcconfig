@@ -5,10 +5,10 @@
 // 'flutter create' template.
 
 // The application's name. By default this is also the title of the Flutter window.
-PRODUCT_NAME = pixrompt
+PRODUCT_NAME = Pixrompt
 
 // The application's bundle identifier
-PRODUCT_BUNDLE_IDENTIFIER = com.pixrompt.pixrompt
+PRODUCT_BUNDLE_IDENTIFIER = online.quaternijkon.pixrompt
 
 // The copyright displayed in application information
-PRODUCT_COPYRIGHT = Copyright © 2026 com.pixrompt. All rights reserved.
+PRODUCT_COPYRIGHT = Copyright © 2026 Quaternijkon. All rights reserved.

@@ -53,6 +53,60 @@ void main() {
     });
   });
 
+  group('Web shell', () {
+    late String indexHtml;
+
+    setUpAll(() {
+      indexHtml = File('web/index.html').readAsStringSync();
+    });
+
+    test('uses Pixrompt metadata for browser and installed app surfaces', () {
+      expect(indexHtml, contains('<title>Pixrompt</title>'));
+      expect(indexHtml, contains('Pixrompt prompt workspace'));
+      expect(
+        indexHtml,
+        contains(
+          '<meta name="apple-mobile-web-app-title" content="Pixrompt">',
+        ),
+      );
+      expect(indexHtml, isNot(contains('A new Flutter project.')));
+      expect(indexHtml, isNot(contains('<title>pixrompt</title>')));
+    });
+  });
+
+  group('iOS platform shell', () {
+    test('declares photo-library usage for image picking', () {
+      final infoPlist = File('ios/Runner/Info.plist').readAsStringSync();
+
+      expect(
+        infoPlist,
+        contains('<key>NSPhotoLibraryUsageDescription</key>'),
+      );
+      expect(infoPlist, contains('Pixrompt'));
+      expect(infoPlist, contains('图片'));
+    });
+
+    test('keeps a CocoaPods integration file for plugins', () {
+      final podfile = File('ios/Podfile');
+
+      expect(podfile.existsSync(), isTrue);
+      expect(
+        podfile.readAsStringSync(),
+        contains('flutter_install_all_ios_pods'),
+      );
+    });
+
+    test('uses the quaternijkon bundle identifier', () {
+      final project =
+          File('ios/Runner.xcodeproj/project.pbxproj').readAsStringSync();
+
+      expect(
+        project,
+        contains('PRODUCT_BUNDLE_IDENTIFIER = online.quaternijkon.pixrompt;'),
+      );
+    });
+  });
+
   group('macOS entitlements', () {
     for (final path in <String>[
       'macos/Runner/DebugProfile.entitlements',
@@ -69,8 +123,39 @@ void main() {
           entitlements,
           matches(_enabledEntitlement('com.apple.security.network.client')),
         );
+        expect(
+          entitlements,
+          matches(
+            _enabledEntitlement(
+              'com.apple.security.files.user-selected.read-write',
+            ),
+          ),
+        );
       });
     }
+  });
+
+  group('macOS platform shell', () {
+    test('uses Pixrompt as the product name', () {
+      final appInfo =
+          File('macos/Runner/Configs/AppInfo.xcconfig').readAsStringSync();
+
+      expect(appInfo, contains('PRODUCT_NAME = Pixrompt'));
+      expect(
+        appInfo,
+        contains('PRODUCT_BUNDLE_IDENTIFIER = online.quaternijkon.pixrompt'),
+      );
+    });
+
+    test('keeps a CocoaPods integration file for plugins', () {
+      final podfile = File('macos/Podfile');
+
+      expect(podfile.existsSync(), isTrue);
+      expect(
+        podfile.readAsStringSync(),
+        contains('flutter_install_all_macos_pods'),
+      );
+    });
   });
 }
 
