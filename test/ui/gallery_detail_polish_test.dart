@@ -43,6 +43,7 @@ void main() {
       grid.padding?.resolve(TextDirection.ltr).bottom,
       greaterThanOrEqualTo(96),
     );
+    expect(grid.cacheExtent, greaterThanOrEqualTo(1200));
     expect(
       find.ancestor(
         of: find.byKey(const ValueKey('gallery.addAction')),

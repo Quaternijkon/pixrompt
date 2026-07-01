@@ -21,6 +21,8 @@ import 'system_ui.dart';
 
 const _galleryBottomActionPadding = 104.0;
 const _galleryBottomSelectionPadding = 112.0;
+const _galleryPreloadMinCacheExtent = 1200.0;
+const _galleryPreloadViewportScreens = 2.0;
 
 class GalleryShell extends StatefulWidget {
   const GalleryShell({
@@ -477,6 +479,10 @@ class _GalleryWaterfall extends StatelessWidget {
     }
     return MasonryGridView.count(
       key: const ValueKey('gallery.waterfall'),
+      cacheExtent: math.max(
+        MediaQuery.sizeOf(context).height * _galleryPreloadViewportScreens,
+        _galleryPreloadMinCacheExtent,
+      ),
       padding: EdgeInsets.only(
         top: MediaQuery.paddingOf(context).top,
         bottom: MediaQuery.paddingOf(context).bottom +
